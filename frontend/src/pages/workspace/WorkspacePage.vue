@@ -1,13 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
-import { fetchAssetDetail, type AssetDetail } from '@/api/assets';
+import {
+  fetchAssetDetail,
+  fetchAssetParseStatus,
+  retryAssetParse,
+  type AssetDetail,
+  type AssetParseStatusResponse,
+} from '@/api/assets';
 
 const route = useRoute();
 const asset = ref<AssetDetail | null>(null);
+const parseStatus = ref<AssetParseStatusResponse | null>(null);
 const loading = ref(true);
 const errorMessage = ref('');
+const retrying = ref(false);
+let parsePollTimer: number | null = null;
 
 const placeholderModules = computed(() => {
   if (asset.value === null) {
@@ -15,28 +24,92 @@ const placeholderModules = computed(() => {
   }
 
   return [
-    ['阅读器', asset.value.basic_resources.parse_status],
+    ['阅读器', parseStatus.value?.parse_status ?? asset.value.basic_resources.parse_status],
     ['问答区', asset.value.basic_resources.kb_status],
     ['思维导图', asset.value.basic_resources.mindmap_status],
     ['笔记区', '未接入'],
   ];
 });
 
+const parseTaskLabel = computed(() => parseStatus.value?.latest_parse?.task.state ?? '未开始');
+
+const parseProgressLabel = computed(() => {
+  const progress = parseStatus.value?.latest_parse?.task.progress;
+
+  if (!progress) {
+    return '等待解析结果';
+  }
+
+  if (progress.extracted_pages !== null && progress.total_pages !== null) {
+    return `${progress.extracted_pages} / ${progress.total_pages} 页`;
+  }
+
+  return '正在同步进度';
+});
+
+function stopParsePolling() {
+  if (parsePollTimer !== null) {
+    window.clearInterval(parsePollTimer);
+    parsePollTimer = null;
+  }
+}
+
+function syncParsePolling() {
+  stopParsePolling();
+
+  if (!parseStatus.value || !['queued', 'processing'].includes(parseStatus.value.parse_status)) {
+    return;
+  }
+
+  parsePollTimer = window.setInterval(() => {
+    void loadParseStatus();
+  }, 5000);
+}
+
+async function loadParseStatus() {
+  parseStatus.value = await fetchAssetParseStatus(route.params.assetId as string);
+  syncParsePolling();
+}
+
 async function loadAssetDetail() {
   loading.value = true;
   errorMessage.value = '';
 
   try {
-    asset.value = await fetchAssetDetail(route.params.assetId as string);
+    const [assetDetail, latestParseStatus] = await Promise.all([
+      fetchAssetDetail(route.params.assetId as string),
+      fetchAssetParseStatus(route.params.assetId as string),
+    ]);
+    asset.value = assetDetail;
+    parseStatus.value = latestParseStatus;
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '资产详情加载失败。';
   } finally {
     loading.value = false;
+    syncParsePolling();
+  }
+}
+
+async function handleRetryParse() {
+  retrying.value = true;
+  errorMessage.value = '';
+
+  try {
+    await retryAssetParse(route.params.assetId as string);
+    await loadAssetDetail();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '重新解析失败。';
+  } finally {
+    retrying.value = false;
   }
 }
 
 onMounted(() => {
   void loadAssetDetail();
+});
+
+onUnmounted(() => {
+  stopParsePolling();
 });
 </script>
 
@@ -45,7 +118,7 @@ onMounted(() => {
     <section class="workspace-shell">
       <header class="workspace-header">
         <div>
-          <p class="page-kicker">Workspace / Spec 02</p>
+          <p class="page-kicker">Workspace / Spec 04</p>
           <h1 v-if="asset">{{ asset.title }}</h1>
           <h1 v-else>资产工作区</h1>
         </div>
@@ -92,10 +165,38 @@ onMounted(() => {
           <div>
             <p class="page-kicker">基础资源状态</p>
             <ul class="resource-list">
-              <li>解析状态：{{ asset.basic_resources.parse_status }}</li>
+              <li>解析状态：{{ parseStatus?.parse_status ?? asset.basic_resources.parse_status }}</li>
               <li>知识库状态：{{ asset.basic_resources.kb_status }}</li>
               <li>思维导图状态：{{ asset.basic_resources.mindmap_status }}</li>
             </ul>
+          </div>
+
+          <div>
+            <p class="page-kicker">解析任务</p>
+            <ul class="resource-list">
+              <li>任务状态：{{ parseStatus?.latest_parse?.status ?? '尚未创建' }}</li>
+              <li>MinerU 状态：{{ parseTaskLabel }}</li>
+              <li>解析进度：{{ parseProgressLabel }}</li>
+            </ul>
+
+            <p v-if="parseStatus?.error_message" class="workspace-parse-error">
+              {{ parseStatus.error_message }}
+            </p>
+
+            <div class="workspace-actions">
+              <button class="toolbar-button toolbar-button--ghost" type="button" @click="loadParseStatus">
+                刷新解析状态
+              </button>
+              <button
+                v-if="parseStatus?.parse_status === 'failed'"
+                class="toolbar-button"
+                type="button"
+                :disabled="retrying"
+                @click="handleRetryParse"
+              >
+                {{ retrying ? '重新排队中...' : '重新解析' }}
+              </button>
+            </div>
           </div>
 
           <div>

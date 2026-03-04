@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.asset import Asset
+from app.models.asset_file import AssetFile
 from app.models.user import User
 from app.schemas.asset import AssetDetail, AssetListItem, BasicResourceStatus, EnhancedResourceStatus
 
@@ -18,6 +19,7 @@ def _to_asset_detail(asset: Asset) -> AssetDetail:
         source_type=asset.source_type,
         language=asset.language,
         status=asset.status,
+        parse_error_message=asset.parse_error_message,
         created_at=asset.created_at,
         updated_at=asset.updated_at,
         basic_resources=BasicResourceStatus(
@@ -99,4 +101,26 @@ def seed_dev_user_and_assets(db: Session) -> None:
     ]
 
     db.add_all(demo_assets)
+    db.flush()
+
+    demo_files = [
+        AssetFile(
+            asset_id=demo_assets[0].id,
+            file_type="original_pdf",
+            storage_key="seed/preset/attention.pdf",
+            public_url="https://nqc.asia/seed/preset/attention.pdf",
+            mime_type="application/pdf",
+            size=1024,
+        ),
+        AssetFile(
+            asset_id=demo_assets[1].id,
+            file_type="original_pdf",
+            storage_key="seed/upload/segment-anything.pdf",
+            public_url="https://nqc.asia/seed/upload/segment-anything.pdf",
+            mime_type="application/pdf",
+            size=1024,
+        ),
+    ]
+
+    db.add_all(demo_files)
     db.commit()

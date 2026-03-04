@@ -37,6 +37,7 @@ class AssetDetail(BaseModel):
     source_type: str
     language: str
     status: str
+    parse_error_message: str | None = None
     created_at: datetime
     updated_at: datetime
     basic_resources: BasicResourceStatus

@@ -45,11 +45,11 @@
 - [x] Spec 00.1：技术路线与外部依赖收敛
 - [x] Spec 01：项目基础骨架初始化
 - [x] Spec 02：学习资产模型与图书馆页
+- [x] Spec 03：PDF 上传、OSS 存储与资产创建
+- [x] Spec 04：MinerU 解析中间层与规范化
 
 ### 待开始
 
-- [ ] Spec 03：PDF 上传、OSS 存储与资产创建
-- [ ] Spec 04：MinerU 解析中间层与规范化
 - [ ] Spec 05：阅读器与文本选中锚点
 - [ ] Spec 06：资产级知识库与 pgvector 检索
 - [ ] Spec 07：AI 助教带引用问答
@@ -142,6 +142,75 @@
   - 进入 `Spec 03：PDF 上传、OSS 存储与资产创建`
 - 建议提交信息：
   - `feat: add asset model and library page skeleton`
+
+### Spec 03 交付记录
+
+- 完成内容：
+  - 新增 `asset_files` 模型与迁移
+  - 新增 OSS 服务封装
+  - 新增 `POST /api/assets/upload`
+  - 新增图书馆页上传弹层与上传交互
+  - 上传成功后写入 `Asset`、`AssetFile` 并返回工作区跳转所需数据
+  - 新增 Celery 解析任务占位
+- 主要新增或修改文件：
+  - `backend/app/models/asset_file.py`
+  - `backend/app/services/oss_service.py`
+  - `backend/app/services/asset_create_service.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/alembic/versions/20260304_0002_create_asset_files.py`
+  - `frontend/src/components/UploadAssetDialog.vue`
+  - `frontend/src/pages/library/LibraryPage.vue`
+  - `frontend/src/api/assets.ts`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - `npm run build` 已通过
+  - `docker compose up --build -d` 已成功重建
+  - 真实 PDF 上传接口验证成功
+  - OSS 原生地址返回 `HTTP/1.1 200 OK`
+- 当前已知缺口：
+  - 解析任务目前仅为 Celery 占位，尚未接 MinerU
+  - 开发数据库中保留了早期种子数据，图书馆存在重复演示资产
+  - 首次上传生成过一条自定义域名 URL 记录，当前代码已修正为 OSS 原生地址策略
+- 下一轮建议：
+  - 进入 `Spec 04：MinerU 解析中间层与规范化`
+- 建议提交信息：
+  - `feat: add pdf upload oss storage and asset creation flow`
+
+### Spec 04 交付记录
+
+- 完成内容：
+  - 新增 `document_parses` 模型、迁移和 `Asset.parse_error_message`
+  - 新增 MinerU 服务封装，支持提交任务、轮询状态和下载结果包
+  - 新增解析规范化层，将 `content_list.json + middle.json + markdown` 转换为平台内部 `parsed_json`
+  - 新增解析产物存储服务，归档原始 zip、解压结果、规范化后的 `parsed_json` 和 markdown
+  - Celery 解析任务从占位改为真实执行解析链路
+  - 新增 `GET /api/assets/:assetId/status`、`GET /api/assets/:assetId/parse`、`POST /api/assets/:assetId/parse/retry`
+  - 工作区页新增解析状态展示、轮询刷新和失败重试入口
+- 主要新增或修改文件：
+  - `backend/app/models/document_parse.py`
+  - `backend/alembic/versions/20260304_0003_create_document_parses.py`
+  - `backend/app/schemas/document_parse.py`
+  - `backend/app/services/mineru_service.py`
+  - `backend/app/services/parse_normalizer.py`
+  - `backend/app/services/parse_storage_service.py`
+  - `backend/app/services/document_parse_service.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/app/api/routes/assets.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - `npm run build` 已通过
+  - 已接入 MinerU 官方 `POST /extract/task` 与 `GET /extract/task/{task_id}` 形态的任务提交与查询逻辑
+- 当前已知缺口：
+  - 尚未对真实 MinerU 返回样例做端到端联调，规范化层当前采用容错映射策略
+  - 尚未生成 `document_chunks`，因此还不能直接进入 pgvector 检索
+  - 尚未接入 PDF.js 阅读器，`parsed_json` 目前只提供后续阅读器所需的统一输入
+- 下一轮建议：
+  - 进入 `Spec 05：阅读器与文本选中锚点`
+  - 之后再进入 `Spec 06：资产级知识库与 pgvector 检索`
+- 建议提交信息：
+  - `feat: add mineru parse pipeline and parsed json normalization`
 
 ## 7. 相关文档
 

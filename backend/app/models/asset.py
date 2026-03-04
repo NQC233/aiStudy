@@ -32,6 +32,7 @@ class Asset(Base):
     language: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
+    parse_error_message: Mapped[str | None] = mapped_column(Text)
     kb_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
     mindmap_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
     slides_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_generated")
@@ -45,3 +46,5 @@ class Asset(Base):
     )
 
     user = relationship("User", back_populates="assets")
+    files = relationship("AssetFile", back_populates="asset", cascade="all, delete-orphan")
+    document_parses = relationship("DocumentParse", back_populates="asset", cascade="all, delete-orphan")

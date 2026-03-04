@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import { useRouter } from 'vue-router';
 
-import { fetchAssets, type AssetListItem } from '@/api/assets';
+import { fetchAssets, type AssetListItem, type AssetUploadResponse } from '@/api/assets';
 import AssetCard from '@/components/AssetCard.vue';
+import UploadAssetDialog from '@/components/UploadAssetDialog.vue';
 
+const router = useRouter();
 const loading = ref(true);
 const errorMessage = ref('');
 const assets = ref<AssetListItem[]>([]);
+const dialogOpen = ref(false);
 
 async function loadAssets() {
   loading.value = true;
@@ -25,6 +29,12 @@ async function loadAssets() {
 onMounted(() => {
   void loadAssets();
 });
+
+async function handleUploadSuccess(payload: AssetUploadResponse) {
+  dialogOpen.value = false;
+  await loadAssets();
+  await router.push(`/workspace/${payload.asset.id}`);
+}
 </script>
 
 <template>
@@ -56,9 +66,14 @@ onMounted(() => {
         <strong>个人图书馆 / 编辑部档案架</strong>
       </div>
 
-      <button class="toolbar-button" type="button" @click="loadAssets">
-        刷新列表
-      </button>
+      <div class="library-toolbar__actions">
+        <button class="toolbar-button toolbar-button--ghost" type="button" @click="loadAssets">
+          刷新列表
+        </button>
+        <button class="toolbar-button" type="button" @click="dialogOpen = true">
+          上传论文
+        </button>
+      </div>
     </section>
 
     <section v-if="loading" class="empty-panel">
@@ -81,5 +96,11 @@ onMounted(() => {
         </RouterLink>
       </AssetCard>
     </section>
+
+    <UploadAssetDialog
+      v-if="dialogOpen"
+      @close="dialogOpen = false"
+      @success="handleUploadSuccess"
+    />
   </main>
 </template>

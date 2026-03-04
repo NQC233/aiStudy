@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_debug: bool = True
     backend_cors_origins: str = "http://localhost:5173"
+    max_upload_size_mb: int = 50
 
     postgres_db: str = "paper_learning"
     postgres_user: str = "paper_user"
@@ -25,9 +26,24 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://redis:6379/0"
     celery_result_backend: str = "redis://redis:6379/0"
 
+    aliyun_oss_endpoint: str | None = None
+    aliyun_oss_bucket: str | None = None
+    aliyun_oss_access_key_id: str | None = None
+    aliyun_oss_access_key_secret: str | None = None
+    aliyun_oss_base_prefix: str = "uploads"
+    aliyun_oss_public_base_url: str | None = None
+    aliyun_oss_mineru_use_origin_url: bool = True
+
     mineru_api_key: str | None = None
     mineru_base_url: str | None = None
+    mineru_model_version: str = "vlm"
+    mineru_timeout_sec: int = 120
+    mineru_poll_interval_sec: int = 5
+    mineru_poll_timeout_sec: int = 600
+
     dashscope_api_key: str | None = None
+    dashscope_base_url: str | None = None
+    dashscope_model_name: str = "qwen-max"
     local_dev_user_id: str = "local-dev-user"
     local_dev_user_email: str = "dev@paper-learning.local"
     local_dev_user_name: str = "本地开发用户"

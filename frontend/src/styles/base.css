@@ -210,6 +210,11 @@ select {
   border-radius: 24px;
 }
 
+.library-toolbar__actions {
+  display: flex;
+  gap: 12px;
+}
+
 .toolbar-button,
 .asset-card__action,
 .workspace-back {
@@ -221,6 +226,15 @@ select {
   border-radius: 999px;
   cursor: pointer;
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.toolbar-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.toolbar-button--ghost {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .toolbar-button:hover,
@@ -401,6 +415,19 @@ select {
   background: rgba(8, 16, 30, 0.78);
 }
 
+.workspace-actions {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.workspace-parse-error {
+  margin: 14px 0 0;
+  color: var(--danger);
+  line-height: 1.7;
+}
+
 .resource-list {
   margin-top: 10px;
   padding-left: 18px;
@@ -416,6 +443,86 @@ select {
 
 .workspace-empty--error h2 {
   color: var(--danger);
+}
+
+.upload-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 7, 14, 0.78);
+  backdrop-filter: blur(10px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.upload-dialog {
+  width: min(620px, 100%);
+  padding: 28px;
+  border-radius: 28px;
+  border: 1px solid rgba(216, 197, 154, 0.2);
+  background:
+    linear-gradient(180deg, rgba(13, 23, 41, 0.96), rgba(8, 16, 30, 0.96)),
+    radial-gradient(circle at top right, rgba(127, 210, 197, 0.1), transparent 40%);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+}
+
+.upload-dialog__header,
+.upload-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.upload-dialog__header h2 {
+  margin: 10px 0 0;
+  font-size: 34px;
+}
+
+.upload-dialog__field {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+  color: var(--text-secondary);
+}
+
+.upload-dialog__field span {
+  color: var(--accent);
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.upload-dialog__field input[type='text'],
+.upload-dialog__field input[type='file'] {
+  width: 100%;
+  border: 1px solid rgba(216, 197, 154, 0.16);
+  background: rgba(5, 13, 24, 0.92);
+  color: var(--text-primary);
+  border-radius: 16px;
+  padding: 14px 16px;
+}
+
+.upload-dialog__field--file strong {
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.upload-dialog__error {
+  margin-top: 18px;
+  color: var(--danger);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.upload-dialog__close {
+  border: 1px solid rgba(216, 197, 154, 0.18);
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
 }
 
 @media (max-width: 720px) {
@@ -434,10 +541,13 @@ select {
 
   .library-hero,
   .library-toolbar,
+  .library-toolbar__actions,
   .workspace-header,
   .workspace-summary__lead,
   .asset-card__topline,
-  .asset-card__footer {
+  .asset-card__footer,
+  .upload-dialog__header,
+  .upload-dialog__footer {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: flex-start;
