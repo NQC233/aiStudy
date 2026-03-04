@@ -1,0 +1,152 @@
+# 智能化论文学习平台项目清单
+
+## 1. 文档目标
+
+本文档用于追踪当前项目基于 Spec 的推进情况，作为多窗口、多 agent 协作时的统一进度看板。
+
+使用原则：
+
+- 每完成一个 Spec，就更新一次状态
+- 每个新窗口 agent 在开始工作前先阅读本清单
+- 本清单只记录事实状态，不记录长篇解释
+
+## 2. 当前已确认决策
+
+- [x] 产品核心实体为 `Asset`
+- [x] 首期目标是跑通资产主链路 MVP
+- [x] PDF 解析链路采用 `OSS -> MinerU`
+- [x] 前端采用 `Vue 3 + TypeScript + Vite`
+- [x] 后端采用 `Python + FastAPI`
+- [x] 数据库采用 `PostgreSQL`
+- [x] 向量存储采用 `pgvector`
+- [x] 异步任务采用 `Celery + Redis`
+- [x] 模型能力优先接入阿里云百炼 `DashScope`
+- [x] 基础设施优先采用 `Docker Compose`
+- [x] 首期采用单用户开发模式
+- [x] 完整项目需预留完整登录体系和用户数据隔离
+- [x] MVP 先做简洁可测试界面
+- [x] Anki 首期只支持 `CSV`
+- [x] 代码注释默认使用中文
+
+## 3. 当前待确认事项
+
+- [ ] 引用定位最小粒度最终定为页级、段落级还是句子级
+- [ ] 思维导图首期是否允许手动编辑
+- [ ] 问答记录是否纳入知识库增量来源
+- [ ] 演示文稿最终输出是否需要 HTML 导出
+- [ ] MinerU 是否需要第二解析策略作为兜底
+- [ ] OSS 公网访问地址采用签名 URL 还是受控公开路径
+
+## 4. Spec 进度看板
+
+### 已完成
+
+- [x] Spec 00：初始需求文档
+- [x] Spec 00.1：技术路线与外部依赖收敛
+- [x] Spec 01：项目基础骨架初始化
+- [x] Spec 02：学习资产模型与图书馆页
+
+### 待开始
+
+- [ ] Spec 03：PDF 上传、OSS 存储与资产创建
+- [ ] Spec 04：MinerU 解析中间层与规范化
+- [ ] Spec 05：阅读器与文本选中锚点
+- [ ] Spec 06：资产级知识库与 pgvector 检索
+- [ ] Spec 07：AI 助教带引用问答
+- [ ] Spec 08：思维导图生成与映射
+- [ ] Spec 09：锚点笔记
+
+### 暂缓到后续阶段
+
+- [ ] Spec 10：互动式演示文稿
+- [ ] Spec 11：TTS 与自动翻页
+- [ ] Spec 12：Anki CSV 导出
+- [ ] Spec 13：课后习题
+
+## 5. 当前建议的执行顺序
+
+1. Spec 01：初始化工程骨架与 Docker Compose
+2. Spec 02：定义资产领域模型和数据库迁移
+3. Spec 03：打通 PDF 上传到 OSS 的链路
+4. Spec 04：打通 MinerU 调用与 `parsed_json` 规范化
+5. Spec 05：接入 PDF.js 阅读器和选区锚点
+6. Spec 06：构建 pgvector 检索
+7. Spec 07：实现带引用问答
+8. Spec 08：实现思维导图
+9. Spec 09：实现锚点笔记
+
+## 6. 每轮开发完成后必须更新的内容
+
+- [x] 本轮完成的 Spec 编号和名称
+- [x] 本轮新增或修改的文件
+- [x] 本轮验证方式和结果
+- [x] 当前已知缺口
+- [x] 下一轮建议
+- [x] 建议提交信息
+
+### Spec 01 交付记录
+
+- 完成内容：
+  - 初始化 `frontend/` Vue 3 + TypeScript + Vite 工程骨架
+  - 初始化 `backend/` FastAPI 工程骨架
+  - 初始化 `Celery + Redis` Worker 骨架
+  - 新增 `docker-compose.yml`、`.env.example`、`.gitignore`、`README.md`
+- 主要新增文件：
+  - `frontend/**/*`
+  - `backend/**/*`
+  - `docker-compose.yml`
+  - `.env.example`
+  - `README.md`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - `docker compose config` 因缺少 `.env` 未完成最终校验
+- 当前已知缺口：
+  - 尚未创建实际 `.env`
+  - 未执行 `npm install`、`pip install` 和容器启动验证
+  - 业务模型和数据库迁移尚未开始
+- 下一轮建议：
+  - 进入 `Spec 02：学习资产模型与图书馆页`
+- 建议提交信息：
+  - `chore: initialize frontend backend and docker project skeleton`
+
+### Spec 02 交付记录
+
+- 完成内容：
+  - 新增 `users`、`assets` 数据模型与 Alembic 迁移
+  - 新增资产列表接口与资产详情接口
+  - 新增单用户开发模式下的种子数据写入
+  - 新增图书馆页、资产卡片组件与工作区占位页
+  - 新增后端 CORS 配置和容器启动时自动执行迁移
+- 主要新增或修改文件：
+  - `backend/alembic/**/*`
+  - `backend/app/models/user.py`
+  - `backend/app/models/asset.py`
+  - `backend/app/schemas/asset.py`
+  - `backend/app/services/asset_service.py`
+  - `backend/app/api/routes/assets.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/components/AssetCard.vue`
+  - `frontend/src/pages/library/LibraryPage.vue`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - `npm run build` 已通过
+  - `docker compose up --build -d` 已成功重建并启动
+  - `GET /api/assets` 已返回 2 条资产数据
+  - `GET /api/assets/:assetId` 已返回资产详情与资源状态占位
+- 当前已知缺口：
+  - 仍未接入真实用户登录，仅保留单用户开发模式
+  - 资产创建仍是种子数据方式，未接入上传链路
+  - 工作区页仍为占位结构，未接阅读器、问答、导图和笔记
+- 下一轮建议：
+  - 进入 `Spec 03：PDF 上传、OSS 存储与资产创建`
+- 建议提交信息：
+  - `feat: add asset model and library page skeleton`
+
+## 7. 相关文档
+
+- [requirements.md](/Users/nqc233/VSCode/aiStudy/docs/requirements.md)
+- [architecture.md](/Users/nqc233/VSCode/aiStudy/docs/architecture.md)
+- [roadmap.md](/Users/nqc233/VSCode/aiStudy/docs/roadmap.md)
+- [agent-spec-playbook.md](/Users/nqc233/VSCode/aiStudy/docs/agent-spec-playbook.md)
+- [parsed-json-spec.md](/Users/nqc233/VSCode/aiStudy/docs/specs/parsed-json-spec.md)

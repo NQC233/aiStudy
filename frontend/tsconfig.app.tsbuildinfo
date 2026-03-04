@@ -1,0 +1,1 @@
+{"root":["./src/env.d.ts","./src/main.ts","./src/shims-vue.d.ts","./src/api/assets.ts","./src/router/index.ts","./src/router/routes.ts"],"version":"5.9.3"}
