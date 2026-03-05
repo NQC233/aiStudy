@@ -47,10 +47,9 @@
 - [x] Spec 02：学习资产模型与图书馆页
 - [x] Spec 03：PDF 上传、OSS 存储与资产创建
 - [x] Spec 04：MinerU 解析中间层与规范化
+- [x] Spec 05：阅读器与文本选中锚点
 
 ### 待开始
-
-- [ ] Spec 05：阅读器与文本选中锚点
 - [ ] Spec 06：资产级知识库与 pgvector 检索
 - [ ] Spec 07：AI 助教带引用问答
 - [ ] Spec 08：思维导图生成与映射
@@ -211,6 +210,36 @@
   - 之后再进入 `Spec 06：资产级知识库与 pgvector 检索`
 - 建议提交信息：
   - `feat: add mineru parse pipeline and parsed json normalization`
+
+### Spec 05 交付记录
+
+- 完成内容：
+  - 新增 `GET /api/assets/:assetId/pdf-meta`、`GET /api/assets/:assetId/pdf`、`GET /api/assets/:assetId/parsed-json`、`POST /api/assets/:assetId/anchor-preview`
+  - 新增阅读器相关 schema 与服务，统一返回原始 PDF 描述、代理 PDF 内容、规范化 `parsed_json` 和锚点预览对象
+  - 工作区从占位页重构为阅读器页面，接入目录导航、页级跳转、当前页状态与锚点预览
+  - 新增 `PdfReaderPanel`，优先使用 PDF.js 渲染当前页，失败时退回原生 PDF 预览
+  - 新增块文本层摘录区域，用 `block_id + paragraph_no + selected_text` 生成首期统一锚点对象
+- 主要新增或修改文件：
+  - `backend/app/schemas/anchor.py`
+  - `backend/app/schemas/reader.py`
+  - `backend/app/services/asset_reader_service.py`
+  - `backend/app/api/routes/assets.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/components/PdfReaderPanel.vue`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/src/styles/base.css`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - `npm run build` 已通过
+- 当前已知缺口：
+  - PDF.js 当前通过 CDN 动态加载，离线环境会自动退回原生 PDF 预览
+  - 首期块级定位仍以“页级跳转 + 当前页块定位”为主，未做字符级持久锚点
+  - 种子资产里的外部 PDF 地址是否可访问仍取决于对应 OSS / 外链可用性
+- 下一轮建议：
+  - 进入 `Spec 06：资产级知识库与 pgvector 检索`
+  - 在进入 `Spec 09` 前补充更稳定的文本层到 `block_id` 映射策略
+- 建议提交信息：
+  - `feat: add pdf reader block navigation and anchor selection flow`
 
 ## 7. 相关文档
 

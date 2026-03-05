@@ -10,3 +10,12 @@ __all__ = [
     "AssetUploadResponse",
     "DocumentParseSummary",
 ]
+from app.schemas.anchor import AssetAnchorPreviewRequest, AssetAnchorPreviewResponse
+from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
+
+__all__ = [
+    "AssetAnchorPreviewRequest",
+    "AssetAnchorPreviewResponse",
+    "AssetParsedDocumentResponse",
+    "AssetPdfDescriptor",
+]

@@ -31,6 +31,15 @@ export interface AssetDetail {
   };
 }
 
+export interface AssetPdfDescriptor {
+  asset_id: string;
+  file_id: string;
+  file_type: string;
+  mime_type: string;
+  size: number;
+  url: string;
+}
+
 export interface AssetUploadResponse {
   asset: AssetDetail;
   uploaded_file_id: string;
@@ -75,6 +84,93 @@ export interface AssetParseRetryResponse {
   message: string;
 }
 
+export interface ParsedDocumentPage {
+  page_id: string;
+  page_no: number;
+  source_page_idx: number;
+  width: number | null;
+  height: number | null;
+  blocks: string[];
+}
+
+export interface ParsedDocumentSection {
+  section_id: string;
+  title: string;
+  level: number;
+  parent_id: string | null;
+  page_start: number;
+  page_end: number;
+  block_ids: string[];
+}
+
+export interface ParsedDocumentBlock {
+  block_id: string;
+  type: string;
+  page_no: number;
+  source_page_idx: number;
+  order: number;
+  section_id: string;
+  bbox: number[] | null;
+  text: string | null;
+  text_level: number | null;
+  paragraph_no: number | null;
+  anchor: Record<string, unknown>;
+  source_refs: Record<string, unknown>;
+  resource_ref: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface ParsedDocumentTocItem {
+  section_id: string;
+  title: string;
+  level: number;
+  page_start: number;
+}
+
+export interface ParsedDocumentPayload {
+  schema_version: string;
+  asset_id: string;
+  parse_id: string;
+  provider: Record<string, unknown>;
+  document: Record<string, unknown>;
+  pages: ParsedDocumentPage[];
+  sections: ParsedDocumentSection[];
+  blocks: ParsedDocumentBlock[];
+  assets: {
+    images: Record<string, unknown>[];
+    tables: Record<string, unknown>[];
+  };
+  reading_order: string[];
+  toc: ParsedDocumentTocItem[];
+  stats: Record<string, unknown>;
+}
+
+export interface AssetParsedDocumentResponse {
+  asset_id: string;
+  parse_status: string;
+  parse_id: string | null;
+  parsed_json: ParsedDocumentPayload | null;
+}
+
+export interface AnchorPreviewRequest {
+  page_no: number;
+  selected_text: string;
+  block_id?: string | null;
+  paragraph_no?: number | null;
+  selector_type?: string;
+  selector_payload?: Record<string, unknown>;
+}
+
+export interface AnchorPreviewResponse {
+  asset_id: string;
+  page_no: number;
+  block_id: string;
+  paragraph_no: number | null;
+  selected_text: string;
+  selector_type: string;
+  selector_payload: Record<string, unknown>;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
 
@@ -83,6 +179,24 @@ async function requestJson<T>(path: string): Promise<T> {
 
   if (!response.ok) {
     throw new Error(`请求失败：${response.status}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+
+async function postJson<T>(path: string, payload: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `请求失败：${response.status}`);
   }
 
   return response.json() as Promise<T>;
@@ -99,8 +213,23 @@ export function fetchAssetDetail(assetId: string): Promise<AssetDetail> {
 }
 
 
+export function fetchAssetPdfMeta(assetId: string): Promise<AssetPdfDescriptor> {
+  return requestJson<AssetPdfDescriptor>(`/api/assets/${assetId}/pdf-meta`);
+}
+
+
+export function getAssetPdfUrl(assetId: string): string {
+  return `${API_BASE_URL}/api/assets/${assetId}/pdf`;
+}
+
+
 export function fetchAssetParseStatus(assetId: string): Promise<AssetParseStatusResponse> {
   return requestJson<AssetParseStatusResponse>(`/api/assets/${assetId}/status`);
+}
+
+
+export function fetchAssetParsedDocument(assetId: string): Promise<AssetParsedDocumentResponse> {
+  return requestJson<AssetParsedDocumentResponse>(`/api/assets/${assetId}/parsed-json`);
 }
 
 
@@ -137,4 +266,9 @@ export async function retryAssetParse(assetId: string): Promise<AssetParseRetryR
   }
 
   return response.json() as Promise<AssetParseRetryResponse>;
+}
+
+
+export function previewAnchor(assetId: string, payload: AnchorPreviewRequest): Promise<AnchorPreviewResponse> {
+  return postJson<AnchorPreviewResponse>(`/api/assets/${assetId}/anchor-preview`, payload);
 }
