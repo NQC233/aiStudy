@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, markRaw, nextTick, onMounted, ref, shallowRef, watch } from 'vue';
-import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
+import { GlobalWorkerOptions, getDocument, TextLayer } from 'pdfjs-dist';
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'katex/dist/katex.min.css';
 
@@ -31,6 +31,7 @@ const emit = defineEmits<{
 GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+const textLayerRef = ref<HTMLElement | null>(null);
 const blockTextLayerRef = ref<HTMLElement | null>(null);
 const currentPage = ref(1);
 const totalPages = ref(1);
@@ -41,6 +42,7 @@ const renderError = ref('');
 const usingFallbackPreview = ref(false);
 const rendering = ref(false);
 let pdfInitTimeoutId: number | null = null;
+let currentTextLayerRenderId = 0;
 
 const blockById = computed<Record<string, ParsedDocumentBlock>>(() => {
   const entries = props.parsedDocument?.blocks ?? [];
@@ -51,6 +53,17 @@ const currentPageBlocks = computed(() => {
   return (props.parsedDocument?.blocks ?? []).filter((block) => block.page_no === currentPage.value);
 });
 
+const resourceById = computed<Record<string, Record<string, unknown>>>(() => {
+  const images = props.parsedDocument?.assets.images ?? [];
+  const tables = props.parsedDocument?.assets.tables ?? [];
+  const resources = [...images, ...tables];
+  return Object.fromEntries(
+    resources
+      .map((resource) => [String(resource.resource_id ?? ''), resource] as const)
+      .filter(([resourceId]) => resourceId),
+  );
+});
+
 const selectedBlockContext = computed(() => {
   if (!props.targetBlockId) {
     return null;
@@ -58,8 +71,40 @@ const selectedBlockContext = computed(() => {
   return blockById.value[props.targetBlockId] ?? null;
 });
 
-function renderBlockHtml(rawText: string | null): string {
-  return renderMarkdownToSafeHtml(rawText);
+function renderBlockHtml(block: ParsedDocumentBlock): string {
+  if (block.text) {
+    return renderMarkdownToSafeHtml(block.text);
+  }
+
+  const resource = block.resource_ref ? resourceById.value[block.resource_ref] : null;
+  if (!resource) {
+    return renderMarkdownToSafeHtml(null);
+  }
+
+  const captions = Array.isArray(resource.caption)
+    ? resource.caption.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+  const footnotes = Array.isArray(resource.footnote)
+    ? resource.footnote.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+  const notes = [...captions, ...footnotes].join('\n\n');
+
+  if (block.type === 'image') {
+    const imageUrl = typeof resource.public_url === 'string' ? resource.public_url : '';
+    if (imageUrl) {
+      const markdown = `![figure](${imageUrl})${notes ? `\n\n${notes}` : ''}`;
+      return renderMarkdownToSafeHtml(markdown);
+    }
+  }
+
+  if (block.type === 'table') {
+    const tableHtml = typeof resource.html === 'string' ? resource.html : '';
+    if (tableHtml) {
+      return renderMarkdownToSafeHtml(`${tableHtml}${notes ? `\n\n${notes}` : ''}`);
+    }
+  }
+
+  return renderMarkdownToSafeHtml(notes || null);
 }
 
 async function renderPage(pageNo: number) {
@@ -69,26 +114,45 @@ async function renderPage(pageNo: number) {
 
   rendering.value = true;
   renderError.value = '';
+  const renderId = ++currentTextLayerRenderId;
 
   try {
     const page = await pdfDocument.value.getPage(pageNo);
     const viewport = page.getViewport({ scale: scale.value });
     const canvas = canvasRef.value;
     const context = canvas.getContext('2d');
+    const outputScale = window.devicePixelRatio || 1;
 
     if (!context) {
       throw new Error('无法初始化 PDF 画布。');
     }
 
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
+    canvas.width = Math.ceil(viewport.width * outputScale);
+    canvas.height = Math.ceil(viewport.height * outputScale);
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
+
+    if (textLayerRef.value) {
+      textLayerRef.value.innerHTML = '';
+      textLayerRef.value.style.width = `${viewport.width}px`;
+      textLayerRef.value.style.height = `${viewport.height}px`;
+    }
 
     await page.render({
       canvasContext: context,
       viewport,
+      transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
     }).promise;
+
+    if (renderId === currentTextLayerRenderId && textLayerRef.value) {
+      const textContent = await page.getTextContent();
+      const textLayer = new TextLayer({
+        textContentSource: textContent,
+        container: textLayerRef.value,
+        viewport,
+      });
+      await textLayer.render();
+    }
 
     emit('page-change', pageNo);
   } catch (error) {
@@ -270,7 +334,10 @@ onMounted(() => {
           <iframe :src="`${pdfUrl}#page=${currentPage}&zoom=${Math.round(scale * 100)}`" title="PDF preview" />
         </div>
 
-        <canvas v-else ref="canvasRef" class="reader-canvas" />
+        <div v-else class="reader-page-layer">
+          <canvas ref="canvasRef" class="reader-canvas" />
+          <div ref="textLayerRef" class="reader-text-layer" />
+        </div>
 
         <div v-if="loading" class="reader-overlay">
           <p>正在加载 PDF 页面...</p>
@@ -315,7 +382,7 @@ onMounted(() => {
             <span>¶ {{ block.paragraph_no ?? '-' }}</span>
             <span>{{ block.type }}</span>
           </div>
-          <div class="reader-block-card__content" v-html="renderBlockHtml(block.text)" />
+          <div class="reader-block-card__content" v-html="renderBlockHtml(block)" />
         </article>
       </div>
     </section>

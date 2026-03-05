@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from app.models.asset import Asset
@@ -100,6 +101,51 @@ def _extract_string_list(item: dict[str, Any], *keys: str) -> list[str]:
             if isinstance(value, str) and value.strip():
                 values.append(value.strip())
     return values
+
+
+def _looks_like_caption(text: str, block_type: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+
+    if block_type == "image":
+        return bool(
+            re.match(r"^(fig(?:ure)?\.?\s*\d+)", normalized)
+            or re.match(r"^(图\s*\d+)", normalized)
+        )
+
+    if block_type == "table":
+        return bool(
+            re.match(r"^(table\.?\s*\d+)", normalized)
+            or re.match(r"^(表\s*\d+)", normalized)
+        )
+
+    return False
+
+
+def _infer_following_caption(
+    content_list: list[dict[str, Any]],
+    start_index: int,
+    page_idx: int,
+    block_type: str,
+) -> tuple[int, str] | None:
+    for offset in range(1, 4):
+        next_index = start_index + offset
+        if next_index >= len(content_list):
+            return None
+
+        next_item = content_list[next_index]
+        if _extract_page_idx(next_item) != page_idx:
+            return None
+
+        if _normalize_block_type(next_item) in {"image", "table"}:
+            return None
+
+        text = _extract_text(next_item)
+        if text and _looks_like_caption(text, block_type):
+            return next_index, text.strip()
+
+    return None
 
 
 def _normalize_block_type(item: dict[str, Any]) -> str | None:
@@ -217,8 +263,12 @@ def normalize_parsed_json(bundle: ParseBundle, asset: Asset, document_parse: Doc
     figure_count = 0
     table_count = 0
     equation_count = 0
+    consumed_content_indexes: set[int] = set()
 
     for index, item in enumerate(content_list):
+        if index in consumed_content_indexes:
+            continue
+
         block_type = _normalize_block_type(item)
         if block_type is None:
             continue
@@ -277,37 +327,65 @@ def normalize_parsed_json(bundle: ParseBundle, asset: Asset, document_parse: Doc
         if block_type == "image":
             figure_count += 1
             resource_id = f"img-{figure_count:03d}"
+            captions = _extract_string_list(item, "img_caption", "caption")
+            inferred_caption = _infer_following_caption(content_list, index, page_idx, block_type)
+            if not captions and inferred_caption is not None:
+                inferred_index, inferred_text = inferred_caption
+                captions = [inferred_text]
+                consumed_content_indexes.add(inferred_index)
+            footnotes = _extract_string_list(item, "footnote")
             resource = {
                 "resource_id": resource_id,
                 "type": "image",
                 "page_no": page_no,
                 "source_page_idx": page_idx,
                 "path": _extract_resource_path(item),
-                "caption": _extract_string_list(item, "img_caption", "caption"),
-                "footnote": _extract_string_list(item, "footnote"),
+                "caption": captions,
+                "footnote": footnotes,
                 "bbox": bbox,
                 "block_id": block_id,
             }
             images.append(resource)
             block["resource_ref"] = resource_id
+            block["metadata"] = {
+                **block["metadata"],
+                "caption": captions,
+                "footnote": footnotes,
+            }
+            if not block["text"]:
+                block["text"] = "\n".join([*captions, *footnotes]) or None
 
         if block_type == "table":
             table_count += 1
             resource_id = f"tbl-{table_count:03d}"
+            captions = _extract_string_list(item, "table_caption", "caption")
+            inferred_caption = _infer_following_caption(content_list, index, page_idx, block_type)
+            if not captions and inferred_caption is not None:
+                inferred_index, inferred_text = inferred_caption
+                captions = [inferred_text]
+                consumed_content_indexes.add(inferred_index)
+            footnotes = _extract_string_list(item, "table_footnote", "footnote")
             resource = {
                 "resource_id": resource_id,
                 "type": "table",
                 "page_no": page_no,
                 "source_page_idx": page_idx,
                 "path": _extract_resource_path(item),
-                "caption": _extract_string_list(item, "table_caption", "caption"),
-                "footnote": _extract_string_list(item, "table_footnote", "footnote"),
+                "caption": captions,
+                "footnote": footnotes,
                 "html": item.get("table_body") or item.get("html"),
                 "bbox": bbox,
                 "block_id": block_id,
             }
             tables.append(resource)
             block["resource_ref"] = resource_id
+            block["metadata"] = {
+                **block["metadata"],
+                "caption": captions,
+                "footnote": footnotes,
+            }
+            if not block["text"]:
+                block["text"] = "\n".join([*captions, *footnotes]) or None
 
         if block_type == "equation":
             equation_count += 1

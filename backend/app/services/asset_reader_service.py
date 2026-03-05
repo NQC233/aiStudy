@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.asset import Asset
 from app.models.asset_file import AssetFile
+from app.services.oss_service import OSSConfigurationError, build_parse_artifact_key, build_public_url
 from app.schemas.anchor import AssetAnchorPreviewRequest, AssetAnchorPreviewResponse
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor, ParsedDocumentPayload
 
@@ -68,6 +70,118 @@ def get_asset_pdf_content(db: Session, asset_id: str) -> tuple[bytes, str]:
     return content, remote_content_type or descriptor.mime_type or "application/pdf"
 
 
+def _resource_public_url(
+    user_id: str,
+    asset_id: str,
+    parse_id: str,
+    path: str | None,
+) -> str | None:
+    if not path:
+        return None
+
+    normalized_path = path.strip()
+    if not normalized_path:
+        return None
+
+    if normalized_path.startswith("http://") or normalized_path.startswith("https://"):
+        return normalized_path
+
+    normalized_path = normalized_path.replace("\\", "/").lstrip("./").lstrip("/")
+    storage_key = build_parse_artifact_key(
+        user_id=user_id,
+        asset_id=asset_id,
+        parse_id=parse_id,
+        relative_path=f"raw/extracted/{normalized_path}",
+    )
+    try:
+        return build_public_url(storage_key)
+    except OSSConfigurationError:
+        return None
+
+
+def _enrich_resource_urls(payload: ParsedDocumentPayload, asset: Asset) -> None:
+    parse_id = payload.parse_id
+    if not parse_id:
+        return
+
+    resource_url_by_id: dict[str, str] = {}
+    for group in (payload.assets.images, payload.assets.tables):
+        for resource in group:
+            resource_id = str(resource.get("resource_id") or "")
+            public_url = _resource_public_url(
+                user_id=asset.user_id,
+                asset_id=asset.id,
+                parse_id=parse_id,
+                path=resource.get("path"),
+            )
+            if public_url:
+                resource["public_url"] = public_url
+                if resource_id:
+                    resource_url_by_id[resource_id] = public_url
+
+    for block in payload.blocks:
+        if not block.resource_ref:
+            continue
+        public_url = resource_url_by_id.get(block.resource_ref)
+        if not public_url:
+            continue
+        block.metadata = {
+            **(block.metadata or {}),
+            "resource_url": public_url,
+        }
+
+
+def _looks_like_resource_caption(text: str, resource_type: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+    if resource_type == "image":
+        return bool(re.match(r"^(fig(?:ure)?\.?\s*\d+|图\s*\d+)", normalized))
+    if resource_type == "table":
+        return bool(re.match(r"^(table\.?\s*\d+|表\s*\d+)", normalized))
+    return False
+
+
+def _enrich_resource_captions(payload: ParsedDocumentPayload) -> None:
+    blocks = sorted(payload.blocks, key=lambda block: block.order)
+    block_by_id = {block.block_id: block for block in blocks}
+
+    for group in (payload.assets.images, payload.assets.tables):
+        for resource in group:
+            if resource.get("caption"):
+                continue
+
+            resource_type = str(resource.get("type") or "")
+            parent_block_id = str(resource.get("block_id") or "")
+            parent_block = block_by_id.get(parent_block_id)
+            if parent_block is None:
+                continue
+
+            candidate_caption = None
+            for block in blocks:
+                if block.order <= parent_block.order:
+                    continue
+                if block.page_no != parent_block.page_no:
+                    break
+                if block.type in {"image", "table"}:
+                    break
+                text = (block.text or "").strip()
+                if text and _looks_like_resource_caption(text, resource_type):
+                    candidate_caption = text
+                    break
+
+            if not candidate_caption:
+                continue
+
+            resource["caption"] = [candidate_caption]
+            parent_block.metadata = {
+                **(parent_block.metadata or {}),
+                "caption": [candidate_caption],
+            }
+            if not parent_block.text:
+                parent_block.text = candidate_caption
+
+
 def get_asset_parsed_document(db: Session, asset_id: str) -> AssetParsedDocumentResponse:
     asset = _require_asset(db, asset_id)
     asset_file = _get_latest_asset_file(db, asset_id, "parsed_json")
@@ -84,6 +198,8 @@ def get_asset_parsed_document(db: Session, asset_id: str) -> AssetParsedDocument
         ) from exc
 
     parsed_payload = ParsedDocumentPayload.model_validate(payload)
+    _enrich_resource_urls(parsed_payload, asset)
+    _enrich_resource_captions(parsed_payload)
     return AssetParsedDocumentResponse(
         asset_id=asset_id,
         parse_status=asset.parse_status,

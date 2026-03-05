@@ -305,7 +305,9 @@
 ## 开发交接记录
 
 - 实际采用的 PDF.js 集成方式：
-  - 前端阅读器组件 `PdfReaderPanel.vue` 通过 CDN 动态加载 PDF.js，渲染当前页 canvas；若 PDF.js 初始化失败，则自动退回浏览器原生 PDF 预览。
+  - 前端阅读器组件 `PdfReaderPanel.vue` 使用本地依赖 `pdfjs-dist`，不再依赖 CDN 动态加载。
+  - 阅读器采用“高 DPI canvas + PDF.js TextLayer”叠加方案，提升清晰度并支持原文文本选中。
+  - 当 PDF.js 初始化异常或超时，自动退回浏览器原生 PDF 预览。
 - 原始 PDF 地址提供方式：
   - 后端新增 `GET /api/assets/{assetId}/pdf-meta` 返回 PDF 元信息；
   - 后端新增 `GET /api/assets/{assetId}/pdf` 代理原始 PDF 内容，前端统一使用该地址加载阅读器，避免直接依赖 OSS 跨域配置。
@@ -328,3 +330,21 @@
 - 是否可以直接进入后续阶段：
   - 可以直接进入 `Spec 06`，当前接口和锚点结构已经为知识库、引用回跳提供稳定输入；
   - 也可以进入 `Spec 09`，但更精细的笔记回跳体验仍建议在后续补强文本层与块映射。
+
+## 增量修复记录（2026-03-05）
+
+- 阅读器体验修复：
+  - 修复 PDF.js 实例被 Vue reactive proxy 包装导致的 `Cannot read from private field` 问题。
+  - 修复 loading 态下 canvas 未挂载导致渲染早退、页面卡住的问题。
+  - 新增 TextLayer 渲染并叠加到 canvas 上，支持阅读区文本选中。
+  - canvas 渲染按设备像素比（DPR）输出，减少页面发糊。
+- 工作区展示修复：
+  - 目录导航面板增加滚动容器，避免长论文目录拉伸页面。
+  - 工作区整体宽度与左右布局比例调整，放大 PDF 阅读区。
+- block 内容渲染策略调整：
+  - block 与右侧预览从纯文本改为“Markdown + LaTeX + HTML 安全渲染”。
+  - 前端接入 `markdown-it + markdown-it-texmath + katex + dompurify`，在保留格式的同时做 XSS 防护。
+- 资源定位补充（与阅读器联动）：
+  - `GET /api/assets/{assetId}/parsed-json` 返回时，为 `assets.images/assets.tables` 动态补齐 `public_url`（由 `path` 映射到 OSS `raw/extracted/...`）。
+  - 资源 block 的 `metadata` 补充 `resource_url`，便于阅读器直接消费资源地址。
+  - 对未显式给出 caption 的图表，增加同页邻近文本的启发式 caption 识别并回填到资源与 block metadata（首期规则）。

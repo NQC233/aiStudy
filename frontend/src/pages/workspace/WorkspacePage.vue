@@ -56,6 +56,17 @@ const currentPageBlocks = computed(() => {
   return (parsedDocument.value?.blocks ?? []).filter((block) => block.page_no === targetPage.value);
 });
 
+const resourceById = computed<Record<string, Record<string, unknown>>>(() => {
+  const images = parsedDocument.value?.assets.images ?? [];
+  const tables = parsedDocument.value?.assets.tables ?? [];
+  const resources = [...images, ...tables];
+  return Object.fromEntries(
+    resources
+      .map((resource) => [String(resource.resource_id ?? ''), resource] as const)
+      .filter(([resourceId]) => resourceId),
+  );
+});
+
 const tocItems = computed(() => parsedDocument.value?.toc ?? []);
 
 const canRenderReader = computed(() => Boolean(asset.value && pdfMeta.value));
@@ -177,12 +188,48 @@ function handlePageChange(pageNo: number) {
   }
 }
 
-function renderBlockPreviewHtml(rawText: string | null): string {
-  return renderMarkdownToSafeHtml(rawText);
-}
-
 function renderTocTitle(title: string): string {
   return normalizeBlockDisplayText(title) || '未命名章节';
+}
+
+function currentBlockPreviewHtml(): string {
+  const block = currentBlock.value;
+  if (!block) {
+    return renderMarkdownToSafeHtml(null);
+  }
+
+  if (block.text) {
+    return renderMarkdownToSafeHtml(block.text);
+  }
+
+  const resource = block.resource_ref ? resourceById.value[block.resource_ref] : null;
+  if (!resource) {
+    return renderMarkdownToSafeHtml(null);
+  }
+
+  const captions = Array.isArray(resource.caption)
+    ? resource.caption.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+  const footnotes = Array.isArray(resource.footnote)
+    ? resource.footnote.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+  const notes = [...captions, ...footnotes].join('\n\n');
+
+  if (block.type === 'image') {
+    const imageUrl = typeof resource.public_url === 'string' ? resource.public_url : '';
+    if (imageUrl) {
+      return renderMarkdownToSafeHtml(`![figure](${imageUrl})${notes ? `\n\n${notes}` : ''}`);
+    }
+  }
+
+  if (block.type === 'table') {
+    const tableHtml = typeof resource.html === 'string' ? resource.html : '';
+    if (tableHtml) {
+      return renderMarkdownToSafeHtml(`${tableHtml}${notes ? `\n\n${notes}` : ''}`);
+    }
+  }
+
+  return renderMarkdownToSafeHtml(notes || null);
 }
 
 onMounted(() => {
@@ -294,7 +341,7 @@ onUnmounted(() => {
               <article v-if="currentBlock" class="workspace-block-preview">
                 <p class="page-kicker">Block Preview</p>
                 <strong>{{ currentBlock.block_id }}</strong>
-                <div class="workspace-block-preview__content" v-html="renderBlockPreviewHtml(currentBlock.text)" />
+                <div class="workspace-block-preview__content" v-html="currentBlockPreviewHtml()" />
               </article>
             </section>
 
