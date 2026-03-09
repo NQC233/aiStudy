@@ -3,18 +3,25 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
 import {
+  createAssetChatSession,
+  fetchAssetChatSessions,
   fetchAssetDetail,
   fetchAssetParseStatus,
   fetchAssetParsedDocument,
+  fetchChatSessionMessages,
   fetchAssetPdfMeta,
   getAssetPdfUrl,
   previewAnchor,
   retryAssetParse,
+  sendChatSessionMessage,
   type AnchorPreviewResponse,
   type AssetDetail,
   type AssetParseStatusResponse,
   type AssetParsedDocumentResponse,
   type AssetPdfDescriptor,
+  type ChatCitationItem,
+  type ChatMessageItem,
+  type ChatSessionItem,
   type ParsedDocumentBlock,
 } from '@/api/assets';
 import PdfReaderPanel from '@/components/PdfReaderPanel.vue';
@@ -37,6 +44,14 @@ const anchorPreview = ref<AnchorPreviewResponse | null>(null);
 const selectedTextSnippet = ref('');
 const targetPage = ref(1);
 const targetBlockId = ref<string | null>(null);
+const chatSessions = ref<ChatSessionItem[]>([]);
+const activeSessionId = ref<string | null>(null);
+const sessionMessages = ref<ChatMessageItem[]>([]);
+const chatQuestion = ref('');
+const chatError = ref('');
+const chatLoading = ref(false);
+const chatSubmitting = ref(false);
+const creatingSession = ref(false);
 let parsePollTimer: number | null = null;
 
 const parsedDocument = computed(() => parsedDocumentResponse.value?.parsed_json ?? null);
@@ -69,8 +84,10 @@ const resourceById = computed<Record<string, Record<string, unknown>>>(() => {
 });
 
 const tocItems = computed(() => parsedDocument.value?.toc ?? []);
+const activeSession = computed(() => chatSessions.value.find((item) => item.id === activeSessionId.value) ?? null);
 
 const canRenderReader = computed(() => Boolean(asset.value && pdfMeta.value));
+const canAskQuestion = computed(() => (asset.value?.basic_resources.kb_status ?? '') === 'ready');
 
 const parseTaskLabel = computed(() => parseStatus.value?.latest_parse?.task.state ?? '未开始');
 
@@ -87,6 +104,10 @@ const parseProgressLabel = computed(() => {
 
   return '正在同步进度';
 });
+
+function normalizeErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 function stopParsePolling() {
   if (parsePollTimer !== null) {
@@ -116,6 +137,7 @@ async function loadWorkspace() {
   loading.value = true;
   errorMessage.value = '';
   resourceWarning.value = '';
+  chatError.value = '';
 
   try {
     const [assetDetail, latestParseStatus] = await Promise.all([
@@ -151,8 +173,10 @@ async function loadWorkspace() {
     if (!targetBlockId.value) {
       targetPage.value = initialPage;
     }
+
+    await loadChatSessions();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '工作区加载失败。';
+    errorMessage.value = normalizeErrorMessage(error, '工作区加载失败。');
   } finally {
     loading.value = false;
     syncParsePolling();
@@ -167,7 +191,7 @@ async function handleRetryParse() {
     await retryAssetParse(assetId.value);
     await loadWorkspace();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '重新解析失败。';
+    errorMessage.value = normalizeErrorMessage(error, '重新解析失败。');
   } finally {
     retrying.value = false;
   }
@@ -196,7 +220,7 @@ async function handleSelectionChange(payload: {
     anchorPreview.value = response;
     focusPage(response.page_no, response.block_id);
   } catch (error) {
-    anchorError.value = error instanceof Error ? error.message : '锚点生成失败。';
+    anchorError.value = normalizeErrorMessage(error, '锚点生成失败。');
   }
 }
 
@@ -251,6 +275,173 @@ function currentBlockPreviewHtml(): string {
   return renderMarkdownToSafeHtml(notes || null);
 }
 
+async function loadSessionMessages(sessionId: string) {
+  chatLoading.value = true;
+  chatError.value = '';
+
+  try {
+    const response = await fetchChatSessionMessages(sessionId);
+    if (activeSessionId.value === sessionId) {
+      sessionMessages.value = response.messages;
+    }
+  } catch (error) {
+    chatError.value = normalizeErrorMessage(error, '会话消息加载失败。');
+    sessionMessages.value = [];
+  } finally {
+    chatLoading.value = false;
+  }
+}
+
+async function loadChatSessions() {
+  try {
+    const sessions = await fetchAssetChatSessions(assetId.value);
+    chatSessions.value = sessions;
+    const hasActiveSession =
+      activeSessionId.value !== null && sessions.some((session) => session.id === activeSessionId.value);
+    if (!hasActiveSession) {
+      activeSessionId.value = sessions[0]?.id ?? null;
+    }
+
+    if (activeSessionId.value) {
+      await loadSessionMessages(activeSessionId.value);
+    } else {
+      sessionMessages.value = [];
+    }
+  } catch (error) {
+    chatError.value = normalizeErrorMessage(error, '会话列表加载失败。');
+    chatSessions.value = [];
+    activeSessionId.value = null;
+    sessionMessages.value = [];
+  }
+}
+
+async function handleCreateSession() {
+  if (!asset.value) {
+    return;
+  }
+
+  creatingSession.value = true;
+  chatError.value = '';
+
+  try {
+    const createdSession = await createAssetChatSession(assetId.value);
+    chatSessions.value = [createdSession, ...chatSessions.value];
+    activeSessionId.value = createdSession.id;
+    sessionMessages.value = [];
+  } catch (error) {
+    chatError.value = normalizeErrorMessage(error, '创建会话失败。');
+  } finally {
+    creatingSession.value = false;
+  }
+}
+
+async function handleAskQuestion() {
+  const sessionId = activeSessionId.value;
+  const question = chatQuestion.value.trim();
+  if (!sessionId || !question || chatSubmitting.value) {
+    return;
+  }
+
+  chatSubmitting.value = true;
+  chatError.value = '';
+
+  try {
+    await sendChatSessionMessage(sessionId, {
+      question,
+      selected_anchor: anchorPreview.value
+        ? {
+            page_no: anchorPreview.value.page_no,
+            block_id: anchorPreview.value.block_id,
+            paragraph_no: anchorPreview.value.paragraph_no,
+            selected_text: anchorPreview.value.selected_text,
+            selector_type: anchorPreview.value.selector_type,
+            selector_payload: anchorPreview.value.selector_payload,
+          }
+        : undefined,
+      top_k: 6,
+    });
+    chatQuestion.value = '';
+
+    chatSessions.value = chatSessions.value.map((session) =>
+      session.id === sessionId
+        ? {
+            ...session,
+            message_count: session.message_count + 2,
+          }
+        : session,
+    );
+    await loadSessionMessages(sessionId);
+  } catch (error) {
+    chatError.value = normalizeErrorMessage(error, '提问失败，请稍后重试。');
+  } finally {
+    chatSubmitting.value = false;
+  }
+}
+
+function handleSessionChange(event: Event) {
+  const selected = (event.target as HTMLSelectElement).value;
+  activeSessionId.value = selected || null;
+  if (activeSessionId.value) {
+    void loadSessionMessages(activeSessionId.value);
+    return;
+  }
+  sessionMessages.value = [];
+}
+
+function formatMessageRole(role: string): string {
+  return role === 'assistant' ? '助教' : '你';
+}
+
+function formatMessageTime(createdAt: string): string {
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) {
+    return createdAt;
+  }
+  return date.toLocaleString();
+}
+
+function formatCitationSection(sectionPath: string[]): string {
+  if (!sectionPath.length) {
+    return '未标注章节';
+  }
+  return sectionPath.join(' / ');
+}
+
+function formatCitationPage(citation: ChatCitationItem): string {
+  if (citation.page_start !== null && citation.page_end !== null) {
+    return citation.page_start === citation.page_end
+      ? `P${citation.page_start}`
+      : `P${citation.page_start}-${citation.page_end}`;
+  }
+  if (citation.page_start !== null) {
+    return `P${citation.page_start}`;
+  }
+  if (citation.page_end !== null) {
+    return `P${citation.page_end}`;
+  }
+  return '页码未知';
+}
+
+function jumpToCitation(citation: ChatCitationItem) {
+  const preferredBlockId = citation.block_ids[0] ?? null;
+  const preferredPage = citation.page_start ?? citation.page_end;
+
+  if (preferredPage !== null) {
+    focusPage(preferredPage, preferredBlockId);
+    return;
+  }
+
+  if (!preferredBlockId) {
+    return;
+  }
+
+  const block = blockById.value[preferredBlockId];
+  if (!block) {
+    return;
+  }
+  focusPage(block.page_no, preferredBlockId);
+}
+
 onMounted(() => {
   void loadWorkspace();
 });
@@ -265,7 +456,7 @@ onUnmounted(() => {
     <section class="workspace-shell">
       <header class="workspace-header">
         <div>
-          <p class="page-kicker">Workspace / Spec 05</p>
+          <p class="page-kicker">Workspace / Spec 07</p>
           <h1 v-if="asset">{{ asset.title }}</h1>
           <h1 v-else>阅读器工作区</h1>
         </div>
@@ -387,6 +578,117 @@ onUnmounted(() => {
               </p>
 
               <pre v-if="anchorPreview" class="workspace-json-preview">{{ JSON.stringify(anchorPreview, null, 2) }}</pre>
+            </section>
+
+            <section class="workspace-panel">
+              <header class="workspace-panel__header">
+                <div>
+                  <p class="page-kicker">Tutor</p>
+                  <h2>问答面板</h2>
+                </div>
+              </header>
+
+              <div class="workspace-chat-toolbar">
+                <button
+                  class="toolbar-button toolbar-button--ghost"
+                  type="button"
+                  :disabled="creatingSession"
+                  @click="handleCreateSession"
+                >
+                  {{ creatingSession ? '创建中...' : '新建会话' }}
+                </button>
+                <select
+                  class="workspace-chat-select"
+                  :value="activeSessionId ?? ''"
+                  @change="handleSessionChange"
+                >
+                  <option value="">请选择会话</option>
+                  <option
+                    v-for="(session, index) in chatSessions"
+                    :key="session.id"
+                    :value="session.id"
+                  >
+                    {{ `#${index + 1} ${session.title}` }}
+                  </option>
+                </select>
+              </div>
+
+              <p v-if="activeSession" class="workspace-chat-session-meta">
+                当前会话：{{ activeSession.title }} · 消息 {{ activeSession.message_count }}
+              </p>
+
+              <p v-if="!canAskQuestion" class="workspace-muted">
+                当前资产知识库未就绪，暂时无法发起问答。
+              </p>
+
+              <div class="workspace-chat-form">
+                <textarea
+                  v-model="chatQuestion"
+                  class="workspace-chat-input"
+                  placeholder="输入你想问的问题，例如：本文方法与 Transformer 的核心差异是什么？"
+                  rows="3"
+                  :disabled="!activeSessionId || !canAskQuestion || chatSubmitting"
+                />
+                <button
+                  class="toolbar-button"
+                  type="button"
+                  :disabled="!activeSessionId || !canAskQuestion || chatSubmitting || !chatQuestion.trim()"
+                  @click="handleAskQuestion"
+                >
+                  {{ chatSubmitting ? '提问中...' : '发送问题' }}
+                </button>
+              </div>
+
+              <p v-if="chatError" class="workspace-parse-error">
+                {{ chatError }}
+              </p>
+
+              <div class="workspace-chat-thread">
+                <p v-if="chatLoading" class="workspace-muted">
+                  正在加载会话消息...
+                </p>
+                <p v-else-if="activeSessionId && sessionMessages.length === 0" class="workspace-muted">
+                  当前会话还没有消息，输入问题后将生成回答和引用。
+                </p>
+                <p v-else-if="!activeSessionId" class="workspace-muted">
+                  请先创建或选择一个会话。
+                </p>
+
+                <article
+                  v-for="message in sessionMessages"
+                  :key="message.id"
+                  class="workspace-chat-message"
+                  :class="{ 'workspace-chat-message--assistant': message.role === 'assistant' }"
+                >
+                  <header class="workspace-chat-message__header">
+                    <strong>{{ formatMessageRole(message.role) }}</strong>
+                    <span>{{ formatMessageTime(message.created_at) }}</span>
+                  </header>
+                  <p class="workspace-chat-message__content">{{ message.content }}</p>
+
+                  <ul
+                    v-if="message.role === 'assistant' && message.citations.length"
+                    class="workspace-citation-list"
+                  >
+                    <li
+                      v-for="citation in message.citations"
+                      :key="citation.citation_id"
+                    >
+                      <button
+                        class="workspace-citation-item"
+                        type="button"
+                        @click="jumpToCitation(citation)"
+                      >
+                        <span class="workspace-citation-item__title">{{ formatCitationSection(citation.section_path) }}</span>
+                        <span class="workspace-citation-item__meta">
+                          {{ formatCitationPage(citation) }} · 相似度 {{ citation.score.toFixed(2) }}
+                        </span>
+                        <p>{{ citation.quote_text }}</p>
+                      </button>
+                    </li>
+                  </ul>
+                </article>
+              </div>
             </section>
 
             <section class="workspace-panel">

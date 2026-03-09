@@ -14,11 +14,14 @@ from app.schemas.document_chunk import (
 from app.schemas.document_parse import AssetParseRetryResponse, AssetParseStatusResponse
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
 from app.schemas.asset_upload import AssetUploadResponse
+from app.schemas.chat import ChatSessionCreateRequest, ChatSessionItem
 from app.services import (
+    create_asset_chat_session,
     create_uploaded_asset,
     enqueue_asset_chunk_rebuild,
     enqueue_asset_parse_retry,
     get_asset_parse_status,
+    list_asset_chat_sessions,
     list_asset_chunks,
     search_asset_chunks,
     validate_pdf_upload,
@@ -144,6 +147,38 @@ def search_asset_retrieval_endpoint(
 ) -> AssetRetrievalSearchResponse:
     """返回单资产范围内可直接回跳的检索结果。"""
     return search_asset_chunks(db, asset_id=asset_id, query=payload.query, top_k=payload.top_k)
+
+
+@router.post(
+    "/{asset_id}/chat/sessions",
+    response_model=ChatSessionItem,
+    summary="创建资产问答会话",
+)
+def create_asset_chat_session_endpoint(
+    asset_id: str,
+    payload: ChatSessionCreateRequest,
+    db: Session = Depends(get_db),
+) -> ChatSessionItem:
+    """创建单资产问答会话。"""
+    return create_asset_chat_session(
+        db=db,
+        asset_id=asset_id,
+        user_id=settings.local_dev_user_id,
+        payload=payload,
+    )
+
+
+@router.get(
+    "/{asset_id}/chat/sessions",
+    response_model=list[ChatSessionItem],
+    summary="获取资产问答会话列表",
+)
+def list_asset_chat_sessions_endpoint(
+    asset_id: str,
+    db: Session = Depends(get_db),
+) -> list[ChatSessionItem]:
+    """返回当前资产下的会话列表。"""
+    return list_asset_chat_sessions(db, asset_id)
 
 
 @router.post(

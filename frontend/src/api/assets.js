@@ -22,10 +22,31 @@ async function requestWithTimeout(input, init, timeoutMs = DEFAULT_REQUEST_TIMEO
         window.clearTimeout(timer);
     }
 }
+async function parseErrorMessage(response, fallback) {
+    try {
+        const payload = (await response.json());
+        if (typeof payload?.detail === 'string' && payload.detail.trim()) {
+            return payload.detail;
+        }
+    }
+    catch {
+        // ignore
+    }
+    try {
+        const text = (await response.text()).trim();
+        if (text) {
+            return text;
+        }
+    }
+    catch {
+        // ignore
+    }
+    return fallback;
+}
 async function requestJson(path) {
     const response = await requestWithTimeout(`${API_BASE_URL}${path}`);
     if (!response.ok) {
-        throw new Error(`请求失败：${response.status}`);
+        throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
     }
     return response.json();
 }
@@ -38,8 +59,7 @@ async function postJson(path, payload) {
         body: JSON.stringify(payload),
     });
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `请求失败：${response.status}`);
+        throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
     }
     return response.json();
 }
@@ -72,8 +92,7 @@ export async function uploadAsset(file, title) {
         body: formData,
     }, UPLOAD_REQUEST_TIMEOUT_MS);
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `上传失败：${response.status}`);
+        throw new Error(await parseErrorMessage(response, `上传失败：${response.status}`));
     }
     return response.json();
 }
@@ -82,11 +101,24 @@ export async function retryAssetParse(assetId) {
         method: 'POST',
     });
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `重试解析失败：${response.status}`);
+        throw new Error(await parseErrorMessage(response, `重试解析失败：${response.status}`));
     }
     return response.json();
 }
 export function previewAnchor(assetId, payload) {
     return postJson(`/api/assets/${assetId}/anchor-preview`, payload);
+}
+export function createAssetChatSession(assetId, title) {
+    return postJson(`/api/assets/${assetId}/chat/sessions`, {
+        title: title?.trim() || null,
+    });
+}
+export function fetchAssetChatSessions(assetId) {
+    return requestJson(`/api/assets/${assetId}/chat/sessions`);
+}
+export function fetchChatSessionMessages(sessionId) {
+    return requestJson(`/api/chat/sessions/${sessionId}/messages`);
+}
+export function sendChatSessionMessage(sessionId, payload) {
+    return postJson(`/api/chat/sessions/${sessionId}/messages`, payload);
 }

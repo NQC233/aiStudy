@@ -171,6 +171,66 @@ export interface AnchorPreviewResponse {
   selector_payload: Record<string, unknown>;
 }
 
+export interface ChatSessionItem {
+  id: string;
+  asset_id: string;
+  user_id: string;
+  title: string;
+  message_count: number;
+  created_at: string;
+}
+
+export interface ChatCitationItem {
+  citation_id: string;
+  chunk_id: string;
+  score: number;
+  page_start: number | null;
+  page_end: number | null;
+  paragraph_start: number | null;
+  paragraph_end: number | null;
+  section_path: string[];
+  block_ids: string[];
+  quote_text: string;
+}
+
+export interface ChatMessageItem {
+  id: string;
+  session_id: string;
+  role: 'user' | 'assistant' | string;
+  message_type: string;
+  content: string;
+  selection_anchor_payload: Record<string, unknown> | null;
+  citations: ChatCitationItem[];
+  created_at: string;
+}
+
+export interface ChatSessionMessagesResponse {
+  session_id: string;
+  asset_id: string;
+  messages: ChatMessageItem[];
+}
+
+export interface ChatSessionMessageRequest {
+  question: string;
+  selected_anchor?: {
+    page_no: number;
+    block_id?: string | null;
+    paragraph_no?: number | null;
+    selected_text?: string;
+    selector_type?: string;
+    selector_payload?: Record<string, unknown>;
+  };
+  top_k?: number;
+}
+
+export interface ChatSessionMessageResponse {
+  session_id: string;
+  question_message_id: string;
+  answer_message_id: string;
+  answer: string;
+  citations: ChatCitationItem[];
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 180000;
@@ -196,11 +256,33 @@ async function requestWithTimeout(input: RequestInfo | URL, init?: RequestInit, 
   }
 }
 
+async function parseErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const payload = (await response.json()) as { detail?: unknown };
+    if (typeof payload?.detail === 'string' && payload.detail.trim()) {
+      return payload.detail;
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const text = (await response.text()).trim();
+    if (text) {
+      return text;
+    }
+  } catch {
+    // ignore
+  }
+
+  return fallback;
+}
+
 async function requestJson<T>(path: string): Promise<T> {
   const response = await requestWithTimeout(`${API_BASE_URL}${path}`);
 
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
   }
 
   return response.json() as Promise<T>;
@@ -217,8 +299,7 @@ async function postJson<T>(path: string, payload: unknown): Promise<T> {
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `请求失败：${response.status}`);
+    throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
   }
 
   return response.json() as Promise<T>;
@@ -273,8 +354,7 @@ export async function uploadAsset(file: File, title?: string): Promise<AssetUplo
   );
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `上传失败：${response.status}`);
+    throw new Error(await parseErrorMessage(response, `上传失败：${response.status}`));
   }
 
   return response.json() as Promise<AssetUploadResponse>;
@@ -287,8 +367,7 @@ export async function retryAssetParse(assetId: string): Promise<AssetParseRetryR
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `重试解析失败：${response.status}`);
+    throw new Error(await parseErrorMessage(response, `重试解析失败：${response.status}`));
   }
 
   return response.json() as Promise<AssetParseRetryResponse>;
@@ -297,4 +376,29 @@ export async function retryAssetParse(assetId: string): Promise<AssetParseRetryR
 
 export function previewAnchor(assetId: string, payload: AnchorPreviewRequest): Promise<AnchorPreviewResponse> {
   return postJson<AnchorPreviewResponse>(`/api/assets/${assetId}/anchor-preview`, payload);
+}
+
+
+export function createAssetChatSession(assetId: string, title?: string): Promise<ChatSessionItem> {
+  return postJson<ChatSessionItem>(`/api/assets/${assetId}/chat/sessions`, {
+    title: title?.trim() || null,
+  });
+}
+
+
+export function fetchAssetChatSessions(assetId: string): Promise<ChatSessionItem[]> {
+  return requestJson<ChatSessionItem[]>(`/api/assets/${assetId}/chat/sessions`);
+}
+
+
+export function fetchChatSessionMessages(sessionId: string): Promise<ChatSessionMessagesResponse> {
+  return requestJson<ChatSessionMessagesResponse>(`/api/chat/sessions/${sessionId}/messages`);
+}
+
+
+export function sendChatSessionMessage(
+  sessionId: string,
+  payload: ChatSessionMessageRequest,
+): Promise<ChatSessionMessageResponse> {
+  return postJson<ChatSessionMessageResponse>(`/api/chat/sessions/${sessionId}/messages`, payload);
 }

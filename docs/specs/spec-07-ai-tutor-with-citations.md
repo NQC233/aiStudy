@@ -313,3 +313,50 @@ Prompt 与响应约束需明确：
 - citation 与阅读器回跳的实际映射策略
 - 当前已知回答质量问题与误引问题
 - 是否可直接进入 `Spec 08` 与 `Spec 09` 联动阶段
+
+## 本轮开发记录（2026-03-09）
+
+- 实际完成内容：
+  - 后端新增 `chat_sessions`、`chat_messages`、`citations` 三表与迁移；
+  - 新增接口：
+    - `POST /api/assets/{assetId}/chat/sessions`
+    - `GET /api/assets/{assetId}/chat/sessions`
+    - `GET /api/chat/sessions/{sessionId}/messages`
+    - `POST /api/chat/sessions/{sessionId}/messages`
+  - 新增 `llm_service`（DashScope Chat）与 `chat_service`（单资产检索增强问答编排）；
+  - 工作区接入最小问答面板（会话、提问、回答、citation 回跳）。
+
+- 实际接入的模型与端点配置：
+  - 配置项：`DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL`、`DASHSCOPE_MODEL_NAME`、`DASHSCOPE_CHAT_TIMEOUT_SEC`；
+  - 默认模型：`qwen-max`；
+  - 默认端点：`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`。
+
+- 问答接口最终请求/响应结构：
+  - `POST /api/chat/sessions/{sessionId}/messages` 请求：
+    - `question`、`selected_anchor`（可选）、`top_k`（默认 6）；
+  - 响应：
+    - `session_id`、`question_message_id`、`answer_message_id`、`answer`、`citations[]`；
+  - `citations[]` 字段：
+    - `citation_id`、`chunk_id`、`score`、`page_start/page_end`、`paragraph_start/paragraph_end`、`block_ids`、`section_path`、`quote_text`。
+
+- citation 与阅读器回跳映射策略：
+  - 前端优先使用 `page_start` 跳页并携带 `block_ids[0]` 定位；
+  - 若页码缺失则尝试仅按 `block_id` 反查并定位；
+  - 若两者都缺失则保留为不可跳转引用（仅展示文本）。
+
+- 偏离原计划：
+  - 检索为空时采用固定“证据不足”回答文案，不调用 LLM；
+  - 当前未做 citation 级别二次筛选，默认持久化本次检索命中集合。
+
+- 当前已知问题：
+  - 未完成真实 DashScope Key 的在线联调；
+  - 回答文本与 citation 仍可能存在“段级相关但句级未严格对齐”的情况；
+  - 未实现 streaming 与跨资产问答（符合本 Spec 不做范围）。
+
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 通过；
+  - `npm run build` 通过。
+
+- 接手建议：
+  - 可直接进入 `Spec 08`；
+  - 在 `Spec 09` 之前建议补充 citation 阈值和 answer-citation 对齐优化，降低误引风险。

@@ -26,3 +26,4 @@ class User(Base):
     )
 
     assets = relationship("Asset", back_populates="user", cascade="all, delete-orphan")
+    chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")

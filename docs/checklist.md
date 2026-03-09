@@ -49,9 +49,9 @@
 - [x] Spec 04：MinerU 解析中间层与规范化
 - [x] Spec 05：阅读器与文本选中锚点
 - [x] Spec 06：资产级知识库与 pgvector 检索
+- [x] Spec 07：AI 助教带引用问答
 
 ### 待开始
-- [ ] Spec 07：AI 助教带引用问答
 - [ ] Spec 08：思维导图生成与映射
 - [ ] Spec 09：锚点笔记
 
@@ -276,6 +276,48 @@
   - 进入 `Spec 07：AI 助教带引用问答`，直接复用当前检索输出组装 citation
 - 建议提交信息：
   - `feat: add asset kb chunk pipeline and pgvector retrieval`
+
+### Spec 07 交付记录
+
+- 完成内容：
+  - 新增 `chat_sessions`、`chat_messages`、`citations` 模型与 Alembic 迁移
+  - 新增问答接口：
+    - `POST /api/assets/{assetId}/chat/sessions`
+    - `GET /api/assets/{assetId}/chat/sessions`
+    - `GET /api/chat/sessions/{sessionId}/messages`
+    - `POST /api/chat/sessions/{sessionId}/messages`
+  - 新增 DashScope 聊天模型封装，支持 OpenAI 兼容响应与超时/配置错误处理
+  - 新增问答编排服务：单资产检索增强、消息持久化、citation 落库
+  - 工作区新增最小问答面板：新建会话、发送问题、展示回答、展示并点击 citation 回跳
+  - 新增配置项 `DASHSCOPE_CHAT_TIMEOUT_SEC`
+- 主要新增或修改文件：
+  - `backend/alembic/versions/20260309_0005_create_chat_sessions_messages_citations.py`
+  - `backend/app/models/chat_session.py`
+  - `backend/app/models/chat_message.py`
+  - `backend/app/models/citation.py`
+  - `backend/app/schemas/chat.py`
+  - `backend/app/services/llm_service.py`
+  - `backend/app/services/chat_service.py`
+  - `backend/app/api/routes/chat.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/app/api/router.py`
+  - `backend/app/core/config.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/src/styles/base.css`
+  - `.env.example`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - `npm run build` 已通过
+- 当前已知缺口：
+  - 尚未完成真实 DashScope 在线联调，当前以结构与错误处理完整性为主
+  - 当前回答与 citation 采用“检索结果全量引用”策略，尚未加入 answer-citation 精细对齐
+  - 流式输出与多资产检索未纳入本轮范围
+- 下一轮建议：
+  - 进入 `Spec 08：思维导图生成与映射`
+  - 在 `Spec 09` 前补充 citation 置信度阈值与答案句级对齐策略
+- 建议提交信息：
+  - `feat: add asset scoped ai tutor qa with citation persistence`
 
 ## 7. 相关文档
 

@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     dashscope_api_key: str | None = None
     dashscope_base_url: str | None = None
     dashscope_model_name: str = "qwen-max"
+    dashscope_chat_timeout_sec: int = 90
     dashscope_embedding_base_url: str | None = None
     dashscope_embedding_model_name: str = "text-embedding-v4"
     dashscope_embedding_dimension: int = 1024
