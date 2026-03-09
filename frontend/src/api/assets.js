@@ -1,13 +1,36 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 180000;
+async function requestWithTimeout(input, init, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+        controller.abort();
+    }, timeoutMs);
+    try {
+        return await fetch(input, {
+            ...init,
+            signal: controller.signal,
+        });
+    }
+    catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new Error('请求超时，请检查后端服务或资源地址。');
+        }
+        throw error;
+    }
+    finally {
+        window.clearTimeout(timer);
+    }
+}
 async function requestJson(path) {
-    const response = await fetch(`${API_BASE_URL}${path}`);
+    const response = await requestWithTimeout(`${API_BASE_URL}${path}`);
     if (!response.ok) {
         throw new Error(`请求失败：${response.status}`);
     }
     return response.json();
 }
 async function postJson(path, payload) {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await requestWithTimeout(`${API_BASE_URL}${path}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -44,10 +67,10 @@ export async function uploadAsset(file, title) {
     if (title && title.trim()) {
         formData.append('title', title.trim());
     }
-    const response = await fetch(`${API_BASE_URL}/api/assets/upload`, {
+    const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/upload`, {
         method: 'POST',
         body: formData,
-    });
+    }, UPLOAD_REQUEST_TIMEOUT_MS);
     if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `上传失败：${response.status}`);
@@ -55,7 +78,7 @@ export async function uploadAsset(file, title) {
     return response.json();
 }
 export async function retryAssetParse(assetId) {
-    const response = await fetch(`${API_BASE_URL}/api/assets/${assetId}/parse/retry`, {
+    const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/parse/retry`, {
         method: 'POST',
     });
     if (!response.ok) {

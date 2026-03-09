@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     app_debug: bool = True
     backend_cors_origins: str = "http://localhost:5173"
     max_upload_size_mb: int = 50
+    remote_file_fetch_timeout_sec: int = 15
 
     postgres_db: str = "paper_learning"
     postgres_user: str = "paper_user"
@@ -44,6 +45,12 @@ class Settings(BaseSettings):
     dashscope_api_key: str | None = None
     dashscope_base_url: str | None = None
     dashscope_model_name: str = "qwen-max"
+    dashscope_embedding_base_url: str | None = None
+    dashscope_embedding_model_name: str = "text-embedding-v4"
+    dashscope_embedding_dimension: int = 1024
+    dashscope_embedding_batch_size: int = 8
+    kb_chunk_target_chars: int = 1200
+    kb_chunk_max_chars: int = 1600
     local_dev_user_id: str = "local-dev-user"
     local_dev_user_email: str = "dev@paper-learning.local"
     local_dev_user_name: str = "本地开发用户"

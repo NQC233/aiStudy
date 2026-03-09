@@ -40,3 +40,4 @@ class DocumentParse(Base):
     )
 
     asset = relationship("Asset", back_populates="document_parses")
+    document_chunks = relationship("DocumentChunk", back_populates="parse", cascade="all, delete-orphan")

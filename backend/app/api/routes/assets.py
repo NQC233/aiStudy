@@ -5,10 +5,24 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.schemas.anchor import AssetAnchorPreviewRequest, AssetAnchorPreviewResponse
 from app.schemas.asset import AssetDetail, AssetListItem
+from app.schemas.document_chunk import (
+    AssetChunkListResponse,
+    AssetChunkRebuildResponse,
+    AssetRetrievalSearchRequest,
+    AssetRetrievalSearchResponse,
+)
 from app.schemas.document_parse import AssetParseRetryResponse, AssetParseStatusResponse
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
 from app.schemas.asset_upload import AssetUploadResponse
-from app.services import create_uploaded_asset, enqueue_asset_parse_retry, get_asset_parse_status, validate_pdf_upload
+from app.services import (
+    create_uploaded_asset,
+    enqueue_asset_chunk_rebuild,
+    enqueue_asset_parse_retry,
+    get_asset_parse_status,
+    list_asset_chunks,
+    search_asset_chunks,
+    validate_pdf_upload,
+)
 from app.services.asset_reader_service import (
     get_asset_parsed_document,
     get_asset_pdf_content,
@@ -16,7 +30,7 @@ from app.services.asset_reader_service import (
     preview_asset_anchor,
 )
 from app.services.asset_service import get_asset_detail, list_assets
-from app.workers.tasks import enqueue_parse_asset
+from app.workers.tasks import enqueue_build_asset_kb, enqueue_parse_asset
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -93,6 +107,43 @@ def retry_asset_parse_endpoint(asset_id: str, db: Session = Depends(get_db)) -> 
         parse_status=asset.parse_status,
         message="已重新加入解析队列。" if should_enqueue else "当前资产已在解析队列中。",
     )
+
+
+@router.get("/{asset_id}/chunks", response_model=AssetChunkListResponse, summary="获取资产 chunk 列表")
+def list_asset_chunks_endpoint(
+    asset_id: str,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+) -> AssetChunkListResponse:
+    """用于调试 chunk 构建结果和引用映射。"""
+    return list_asset_chunks(db, asset_id=asset_id, limit=limit)
+
+
+@router.post("/{asset_id}/chunks/rebuild", response_model=AssetChunkRebuildResponse, summary="重建资产知识库")
+def rebuild_asset_chunks_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetChunkRebuildResponse:
+    """将当前资产推进到知识库重建队列。"""
+    asset, should_enqueue = enqueue_asset_chunk_rebuild(db, asset_id)
+    if should_enqueue:
+        enqueue_build_asset_kb.delay(asset.id)
+    return AssetChunkRebuildResponse(
+        asset_id=asset.id,
+        kb_status=asset.kb_status,
+        message="已加入知识库重建队列。" if should_enqueue else "当前资产知识库正在构建中。",
+    )
+
+
+@router.post(
+    "/{asset_id}/retrieval/search",
+    response_model=AssetRetrievalSearchResponse,
+    summary="按语义检索资产知识库",
+)
+def search_asset_retrieval_endpoint(
+    asset_id: str,
+    payload: AssetRetrievalSearchRequest,
+    db: Session = Depends(get_db),
+) -> AssetRetrievalSearchResponse:
+    """返回单资产范围内可直接回跳的检索结果。"""
+    return search_asset_chunks(db, asset_id=asset_id, query=payload.query, top_k=payload.top_k)
 
 
 @router.post(

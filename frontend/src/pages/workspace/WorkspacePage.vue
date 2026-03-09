@@ -30,6 +30,7 @@ const parsedDocumentResponse = ref<AssetParsedDocumentResponse | null>(null);
 const pdfMeta = ref<AssetPdfDescriptor | null>(null);
 const loading = ref(true);
 const errorMessage = ref('');
+const resourceWarning = ref('');
 const retrying = ref(false);
 const anchorError = ref('');
 const anchorPreview = ref<AnchorPreviewResponse | null>(null);
@@ -114,21 +115,39 @@ function focusPage(pageNo: number, blockId: string | null = null) {
 async function loadWorkspace() {
   loading.value = true;
   errorMessage.value = '';
+  resourceWarning.value = '';
 
   try {
-    const [assetDetail, latestParseStatus, latestParsedDocument, latestPdfMeta] = await Promise.all([
+    const [assetDetail, latestParseStatus] = await Promise.all([
       fetchAssetDetail(assetId.value),
       fetchAssetParseStatus(assetId.value),
-      fetchAssetParsedDocument(assetId.value),
-      fetchAssetPdfMeta(assetId.value),
     ]);
 
     asset.value = assetDetail;
     parseStatus.value = latestParseStatus;
-    parsedDocumentResponse.value = latestParsedDocument;
-    pdfMeta.value = latestPdfMeta;
+    parsedDocumentResponse.value = null;
+    pdfMeta.value = null;
 
-    const initialPage = latestParsedDocument.parsed_json?.pages[0]?.page_no ?? 1;
+    const [parsedDocumentResult, pdfMetaResult] = await Promise.allSettled([
+      fetchAssetParsedDocument(assetId.value),
+      fetchAssetPdfMeta(assetId.value),
+    ]);
+    const warnings: string[] = [];
+
+    if (parsedDocumentResult.status === 'fulfilled') {
+      parsedDocumentResponse.value = parsedDocumentResult.value;
+    } else {
+      warnings.push('解析索引加载失败');
+    }
+
+    if (pdfMetaResult.status === 'fulfilled') {
+      pdfMeta.value = pdfMetaResult.value;
+    } else {
+      warnings.push('PDF 资源加载失败');
+    }
+
+    resourceWarning.value = warnings.join('；');
+    const initialPage = parsedDocumentResponse.value?.parsed_json?.pages[0]?.page_no ?? 1;
     if (!targetBlockId.value) {
       targetPage.value = initialPage;
     }
@@ -274,6 +293,9 @@ onUnmounted(() => {
           <p class="workspace-authors">{{ asset.authors.join(' · ') }}</p>
           <p class="workspace-abstract">
             {{ asset.abstract || '当前资产还没有摘要内容，后续会由解析链路补充。' }}
+          </p>
+          <p v-if="resourceWarning" class="workspace-parse-error">
+            {{ resourceWarning }}。你可以先查看状态并重试解析。
           </p>
         </section>
 

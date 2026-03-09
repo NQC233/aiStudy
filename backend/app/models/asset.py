@@ -48,3 +48,4 @@ class Asset(Base):
     user = relationship("User", back_populates="assets")
     files = relationship("AssetFile", back_populates="asset", cascade="all, delete-orphan")
     document_parses = relationship("DocumentParse", back_populates="asset", cascade="all, delete-orphan")
+    document_chunks = relationship("DocumentChunk", back_populates="asset", cascade="all, delete-orphan")

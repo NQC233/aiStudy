@@ -2,6 +2,7 @@ import logging
 
 from app.db.session import SessionLocal
 from app.services.document_parse_service import run_parse_pipeline
+from app.services.retrieval_service import enqueue_asset_chunk_rebuild, run_asset_kb_pipeline
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,10 @@ def enqueue_parse_asset(asset_id: str) -> dict[str, str]:
     db = SessionLocal()
     try:
         document_parse = run_parse_pipeline(db, asset_id)
+        if document_parse.status == "succeeded":
+            _, should_enqueue = enqueue_asset_chunk_rebuild(db, asset_id)
+            if should_enqueue:
+                enqueue_build_asset_kb.delay(asset_id)
         return {
             "asset_id": asset_id,
             "parse_id": document_parse.id,
@@ -26,6 +31,19 @@ def enqueue_parse_asset(asset_id: str) -> dict[str, str]:
         }
     except Exception as exc:  # pragma: no cover - Celery 任务需要把异常继续抛出给 Worker
         logger.exception("解析任务执行失败: asset_id=%s", asset_id, exc_info=exc)
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.workers.tasks.enqueue_build_asset_kb")
+def enqueue_build_asset_kb(asset_id: str) -> dict[str, str | int | None]:
+    """执行资产知识库构建任务。"""
+    db = SessionLocal()
+    try:
+        return run_asset_kb_pipeline(db, asset_id)
+    except Exception as exc:  # pragma: no cover - Celery 任务需要把异常继续抛出给 Worker
+        logger.exception("知识库构建失败: asset_id=%s", asset_id, exc_info=exc)
         raise
     finally:
         db.close()

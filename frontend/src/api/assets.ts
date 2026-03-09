@@ -172,10 +172,32 @@ export interface AnchorPreviewResponse {
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 180000;
 
+async function requestWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('请求超时，请检查后端服务或资源地址。');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 async function requestJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const response = await requestWithTimeout(`${API_BASE_URL}${path}`);
 
   if (!response.ok) {
     throw new Error(`请求失败：${response.status}`);
@@ -186,7 +208,7 @@ async function requestJson<T>(path: string): Promise<T> {
 
 
 async function postJson<T>(path: string, payload: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await requestWithTimeout(`${API_BASE_URL}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -241,10 +263,14 @@ export async function uploadAsset(file: File, title?: string): Promise<AssetUplo
     formData.append('title', title.trim());
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/assets/upload`, {
-    method: 'POST',
-    body: formData,
-  });
+  const response = await requestWithTimeout(
+    `${API_BASE_URL}/api/assets/upload`,
+    {
+      method: 'POST',
+      body: formData,
+    },
+    UPLOAD_REQUEST_TIMEOUT_MS,
+  );
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -256,7 +282,7 @@ export async function uploadAsset(file: File, title?: string): Promise<AssetUplo
 
 
 export async function retryAssetParse(assetId: string): Promise<AssetParseRetryResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/assets/${assetId}/parse/retry`, {
+  const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/parse/retry`, {
     method: 'POST',
   });
 

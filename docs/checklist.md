@@ -48,9 +48,9 @@
 - [x] Spec 03：PDF 上传、OSS 存储与资产创建
 - [x] Spec 04：MinerU 解析中间层与规范化
 - [x] Spec 05：阅读器与文本选中锚点
+- [x] Spec 06：资产级知识库与 pgvector 检索
 
 ### 待开始
-- [ ] Spec 06：资产级知识库与 pgvector 检索
 - [ ] Spec 07：AI 助教带引用问答
 - [ ] Spec 08：思维导图生成与映射
 - [ ] Spec 09：锚点笔记
@@ -240,6 +240,42 @@
   - 在进入 `Spec 09` 前补充更稳定的文本层到 `block_id` 映射策略
 - 建议提交信息：
   - `feat: add pdf reader block navigation and anchor selection flow`
+
+### Spec 06 交付记录
+
+- 完成内容：
+  - 新增 `document_chunks` 模型与 Alembic 迁移，落地 `block_ids / page / paragraph / section_path / embedding` 契约
+  - 基于 `parsed_json` 实现 chunk 构建服务，按章节边界与长度阈值进行稳定切分
+  - 新增 DashScope embedding 服务封装，默认支持阿里云百炼 `text-embedding-v4`
+  - 新增知识库构建流水线：`parsed_json -> chunks -> embedding -> kb_status`
+  - 新增资产级检索服务，使用 pgvector 余弦距离返回可回跳引用结构
+  - 新增接口：
+    - `GET /api/assets/{assetId}/chunks`
+    - `POST /api/assets/{assetId}/chunks/rebuild`
+    - `POST /api/assets/{assetId}/retrieval/search`
+  - Celery 解析任务成功后自动触发知识库构建任务
+- 主要新增或修改文件：
+  - `backend/app/models/document_chunk.py`
+  - `backend/alembic/versions/20260305_0004_create_document_chunks.py`
+  - `backend/app/services/chunk_builder_service.py`
+  - `backend/app/services/embedding_service.py`
+  - `backend/app/services/retrieval_service.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/app/schemas/document_chunk.py`
+  - `backend/app/core/config.py`
+  - `backend/pyproject.toml`
+  - `.env.example`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+- 当前已知缺口：
+  - 尚未完成真实 DashScope key 的端到端在线联调
+  - 检索首期未引入 rerank，仅保留向量召回
+  - chunk token 统计当前为近似值，后续可替换为模型 tokenizer
+- 下一轮建议：
+  - 进入 `Spec 07：AI 助教带引用问答`，直接复用当前检索输出组装 citation
+- 建议提交信息：
+  - `feat: add asset kb chunk pipeline and pgvector retrieval`
 
 ## 7. 相关文档
 

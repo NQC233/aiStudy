@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.asset import Asset
 from app.models.asset_file import AssetFile
+from app.core.config import settings
 from app.services.oss_service import OSSConfigurationError, build_parse_artifact_key, build_public_url
 from app.schemas.anchor import AssetAnchorPreviewRequest, AssetAnchorPreviewResponse
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor, ParsedDocumentPayload
@@ -34,14 +36,24 @@ def _require_asset(db: Session, asset_id: str) -> Asset:
 
 def _download_bytes(public_url: str) -> tuple[bytes, str | None]:
     try:
-        with urlopen(public_url) as response:
+        with urlopen(public_url, timeout=settings.remote_file_fetch_timeout_sec) as response:
             return response.read(), response.headers.get_content_type()
     except HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"读取远端文件失败：{exc.code}",
         ) from exc
+    except (TimeoutError, socket.timeout):
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="读取远端文件超时，请检查 OSS/外链可用性。",
+        ) from None
     except URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="读取远端文件超时，请检查 OSS/外链可用性。",
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="读取远端文件失败，当前文件地址不可达。",

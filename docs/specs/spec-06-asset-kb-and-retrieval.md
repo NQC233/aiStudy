@@ -331,3 +331,36 @@
 - pgvector 的索引和检索方式是什么
 - 检索结果是否已满足 `Spec 07` 的引用组装需求
 - 当前还存在哪些精度或召回问题
+
+## 开发交接记录
+
+- 实际 chunk 切分规则：
+  - 仅消费 `heading / paragraph / list / table / equation` 五类块；
+  - 基于 `reading_order` 顺序切分，优先按章节路径变化切段；
+  - 同章节内按 `KB_CHUNK_TARGET_CHARS` 与 `KB_CHUNK_MAX_CHARS` 阈值累积切分；
+  - heading 作为分段信号，当当前 chunk 已达到最小长度时会触发切段。
+- 每个 chunk 最终保留字段：
+  - `chunk_index`
+  - `section_path`
+  - `page_start / page_end`
+  - `paragraph_start / paragraph_end`
+  - `block_ids`
+  - `text_content`
+  - `token_count`
+  - `embedding_status`
+  - `embedding`
+- embedding 模型与接入方式：
+  - 默认接入阿里云百炼 `text-embedding-v4`；
+  - 配置项：`DASHSCOPE_EMBEDDING_MODEL_NAME`、`DASHSCOPE_EMBEDDING_BASE_URL`、`DASHSCOPE_EMBEDDING_DIMENSION`；
+  - 首期支持 OpenAI 兼容响应与 DashScope 原生 `output.embeddings` 两种响应格式解析。
+- pgvector 存储与检索方式：
+  - `document_chunks.embedding` 使用 `Vector(1024)` 存储；
+  - 检索使用 `cosine_distance` 排序，严格限定 `asset_id` 单资产范围；
+  - 当前已建立 `asset_id / parse_id / embedding_status` 索引，向量专用 ANN 索引留待后续在真实数据量下压测后追加。
+- 对 `Spec 07` 的可复用性：
+  - 已提供 `POST /api/assets/{assetId}/retrieval/search`；
+  - 返回结构包含 `chunk_id / score / text / page / paragraph / block_ids / section_path / quote_text`，可直接用于 citation 组装与回跳。
+- 本轮偏离与已知问题：
+  - 尚未完成真实 DashScope key 的在线联调；
+  - 检索首期未加入 rerank；
+  - `token_count` 为近似统计（按空白分词），后续可替换为模型 tokenizer。
