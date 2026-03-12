@@ -84,6 +84,46 @@ export interface AssetParseRetryResponse {
   message: string;
 }
 
+export interface MindmapNodeItem {
+  id: string;
+  parent_id: string | null;
+  node_key: string;
+  parent_key: string | null;
+  title: string;
+  summary: string | null;
+  level: number;
+  order: number;
+  page_no: number | null;
+  paragraph_ref: string | null;
+  section_path: string[];
+  block_ids: string[];
+  selector_payload: Record<string, unknown>;
+}
+
+export interface MindmapSnapshot {
+  id: string;
+  asset_id: string;
+  version: number;
+  status: string;
+  root_node_key: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  nodes: MindmapNodeItem[];
+}
+
+export interface AssetMindmapResponse {
+  asset_id: string;
+  mindmap_status: string;
+  mindmap: MindmapSnapshot | null;
+}
+
+export interface AssetMindmapRebuildResponse {
+  asset_id: string;
+  mindmap_status: string;
+  message: string;
+}
+
 export interface ParsedDocumentPage {
   page_id: string;
   page_no: number;
@@ -371,6 +411,24 @@ export async function retryAssetParse(assetId: string): Promise<AssetParseRetryR
   }
 
   return response.json() as Promise<AssetParseRetryResponse>;
+}
+
+
+export function fetchAssetMindmap(assetId: string): Promise<AssetMindmapResponse> {
+  return requestJson<AssetMindmapResponse>(`/api/assets/${assetId}/mindmap`);
+}
+
+
+export async function rebuildAssetMindmap(assetId: string): Promise<AssetMindmapRebuildResponse> {
+  const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/mindmap/rebuild`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, `重建导图失败：${response.status}`));
+  }
+
+  return response.json() as Promise<AssetMindmapRebuildResponse>;
 }
 
 

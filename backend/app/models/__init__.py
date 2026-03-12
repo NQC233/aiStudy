@@ -5,6 +5,8 @@ from app.models.chat_session import ChatSession
 from app.models.citation import Citation
 from app.models.document_chunk import DocumentChunk
 from app.models.document_parse import DocumentParse
+from app.models.mindmap import Mindmap
+from app.models.mindmap_node import MindmapNode
 from app.models.user import User
 
 __all__ = [
@@ -15,5 +17,7 @@ __all__ = [
     "Citation",
     "DocumentChunk",
     "DocumentParse",
+    "Mindmap",
+    "MindmapNode",
     "User",
 ]

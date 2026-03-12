@@ -12,14 +12,17 @@ from app.schemas.document_chunk import (
     AssetRetrievalSearchResponse,
 )
 from app.schemas.document_parse import AssetParseRetryResponse, AssetParseStatusResponse
+from app.schemas.mindmap import AssetMindmapRebuildResponse, AssetMindmapResponse
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
 from app.schemas.asset_upload import AssetUploadResponse
 from app.schemas.chat import ChatSessionCreateRequest, ChatSessionItem
 from app.services import (
     create_asset_chat_session,
     create_uploaded_asset,
+    enqueue_asset_mindmap_rebuild,
     enqueue_asset_chunk_rebuild,
     enqueue_asset_parse_retry,
+    get_asset_mindmap,
     get_asset_parse_status,
     list_asset_chat_sessions,
     list_asset_chunks,
@@ -33,7 +36,7 @@ from app.services.asset_reader_service import (
     preview_asset_anchor,
 )
 from app.services.asset_service import get_asset_detail, list_assets
-from app.workers.tasks import enqueue_build_asset_kb, enqueue_parse_asset
+from app.workers.tasks import enqueue_build_asset_kb, enqueue_generate_asset_mindmap, enqueue_parse_asset
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -73,6 +76,12 @@ def get_asset_pdf_endpoint(asset_id: str, db: Session = Depends(get_db)) -> Resp
 def get_asset_parsed_json_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetParsedDocumentResponse:
     """返回阅读器目录、块级定位和锚点索引所需的 parsed_json。"""
     return get_asset_parsed_document(db, asset_id)
+
+
+@router.get("/{asset_id}/mindmap", response_model=AssetMindmapResponse, summary="获取资产导图")
+def get_asset_mindmap_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetMindmapResponse:
+    """返回当前资产可用的导图节点与映射信息。"""
+    return get_asset_mindmap(db, asset_id)
 
 
 @router.get("/{asset_id}/status", response_model=AssetParseStatusResponse, summary="获取资产解析状态")
@@ -132,6 +141,23 @@ def rebuild_asset_chunks_endpoint(asset_id: str, db: Session = Depends(get_db)) 
         asset_id=asset.id,
         kb_status=asset.kb_status,
         message="已加入知识库重建队列。" if should_enqueue else "当前资产知识库正在构建中。",
+    )
+
+
+@router.post(
+    "/{asset_id}/mindmap/rebuild",
+    response_model=AssetMindmapRebuildResponse,
+    summary="重建资产导图",
+)
+def rebuild_asset_mindmap_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetMindmapRebuildResponse:
+    """将当前资产推进到导图重建队列。"""
+    asset, should_enqueue = enqueue_asset_mindmap_rebuild(db, asset_id)
+    if should_enqueue:
+        enqueue_generate_asset_mindmap.delay(asset.id)
+    return AssetMindmapRebuildResponse(
+        asset_id=asset.id,
+        mindmap_status=asset.mindmap_status,
+        message="已加入导图生成队列。" if should_enqueue else "当前资产导图正在生成中。",
     )
 
 

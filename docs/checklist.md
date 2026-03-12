@@ -50,9 +50,9 @@
 - [x] Spec 05：阅读器与文本选中锚点
 - [x] Spec 06：资产级知识库与 pgvector 检索
 - [x] Spec 07：AI 助教带引用问答
+- [x] Spec 08：思维导图生成与映射
 
 ### 待开始
-- [ ] Spec 08：思维导图生成与映射
 - [ ] Spec 09：锚点笔记
 
 ### 暂缓到后续阶段
@@ -318,6 +318,42 @@
   - 在 `Spec 09` 前补充 citation 置信度阈值与答案句级对齐策略
 - 建议提交信息：
   - `feat: add asset scoped ai tutor qa with citation persistence`
+
+### Spec 08 交付记录
+
+- 完成内容：
+  - 新增 `mindmaps`、`mindmap_nodes` 模型与 Alembic 迁移，沉淀导图版本快照与节点映射
+  - 新增导图生成服务：基于 `parsed_json` 自动生成章节节点与关键点子节点，并绑定 `page_no / block_ids / section_path / selector_payload`
+  - 新增 Celery 任务 `enqueue_generate_asset_mindmap`，解析成功后自动触发导图生成
+  - 新增导图接口：
+    - `GET /api/assets/{assetId}/mindmap`
+    - `POST /api/assets/{assetId}/mindmap/rebuild`
+  - 工作区新增最小导图面板，支持导图状态展示、重建、节点点击回跳阅读器
+  - 导图节点契约已包含 `node_key` 与 `selector_payload`，可被 `Spec 09` 的 `mindmap_node` 锚点复用
+- 主要新增或修改文件：
+  - `backend/alembic/versions/20260309_0006_create_mindmaps_and_nodes.py`
+  - `backend/app/models/mindmap.py`
+  - `backend/app/models/mindmap_node.py`
+  - `backend/app/schemas/mindmap.py`
+  - `backend/app/services/mindmap_service.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/app/api/routes/assets.py`
+  - `frontend/src/components/MindmapPanel.vue`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/src/api/assets.ts`
+  - `docs/checklist.md`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - `npm run build` 已通过
+- 当前已知缺口：
+  - 首期导图为“结构提取 + 关键点摘录”策略，未引入 LLM 深度摘要和手动编辑
+  - 节点映射粒度当前为 `block` 级，未做句子级偏移定位
+  - 导图接口当前返回“最近可用版本”，未提供多版本对比视图
+- 下一轮建议：
+  - 进入 `Spec 09：锚点笔记`，直接复用 `mindmap_node` 节点键契约打通笔记挂接
+  - 为导图生成增加质量指标（节点覆盖率、空摘要率）和失败告警
+- 建议提交信息：
+  - `feat: add asset mindmap generation mapping and workspace panel`
 
 ## 7. 相关文档
 

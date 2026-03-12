@@ -105,6 +105,18 @@ export async function retryAssetParse(assetId) {
     }
     return response.json();
 }
+export function fetchAssetMindmap(assetId) {
+    return requestJson(`/api/assets/${assetId}/mindmap`);
+}
+export async function rebuildAssetMindmap(assetId) {
+    const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/mindmap/rebuild`, {
+        method: 'POST',
+    });
+    if (!response.ok) {
+        throw new Error(await parseErrorMessage(response, `重建导图失败：${response.status}`));
+    }
+    return response.json();
+}
 export function previewAnchor(assetId, payload) {
     return postJson(`/api/assets/${assetId}/anchor-preview`, payload);
 }

@@ -323,3 +323,53 @@
 - 导图重建与版本策略
 - 与 `Spec 09` 锚点契约是否已完全对齐
 - 当前仍未解决的导图回跳偏差
+
+## 本轮交接记录（2026-03-09）
+
+- 导图最终生成策略（规则/模型/混合）：
+  - 当前采用规则生成（`parsed_json.sections + parsed_json.blocks`），未引入 LLM。
+  - 先生成章节主干节点，再按每个章节最多 2 个关键点生成子节点。
+  - 入口实现位于 `backend/app/services/mindmap_service.py`。
+- `node_key` 稳定性策略：
+  - 根节点固定为 `root`。
+  - 章节节点使用 `sec:{section_id}`。
+  - 关键点节点使用 `kp:{block_id}`。
+  - 同一 `parsed_json` 输入下可保持稳定；跨解析版本以 `version` 区分，不复用旧主键。
+- 节点映射实际支持到的粒度：
+  - 已支持 `page_no + block_ids + section_path + selector_payload`。
+  - `selector_payload` 以 `block` 选择器为主，章节节点在缺少块时退化为 `section` 选择器。
+  - 暂未支持句子级 offset。
+- 导图重建与版本策略：
+  - 自动触发：解析任务成功后自动异步触发导图任务。
+  - 手动触发：`POST /api/assets/{assetId}/mindmap/rebuild`。
+  - 每次重建创建新的 `mindmaps.version`（资产内递增），查询默认返回最近可用版本（优先最近成功，回退策略已实现）。
+  - 状态回写：`asset.mindmap_status` 在 `processing / ready / failed` 间切换。
+- 与 `Spec 09` 锚点契约是否已完全对齐：
+  - 已完成关键对齐：节点侧已具备稳定 `node_key` 和 `selector_payload`，可支持 `mindmap_node` 类型锚点。
+  - 仍待 `Spec 09` 在笔记接口中落地 `anchor_type= mindmap_node`、`selector_payload.node_key` 的写入与查询。
+- 当前仍未解决的导图回跳偏差：
+  - 解析质量不足或章节识别不稳定时，节点可能仅能页级回跳。
+  - 关键点摘要为规则截断文本，语义提炼质量有限。
+  - 当前未提供多版本导图对比视图。
+
+## 本轮变更清单（代码）
+
+- 后端：
+  - 新增模型：`backend/app/models/mindmap.py`、`backend/app/models/mindmap_node.py`
+  - 新增迁移：`backend/alembic/versions/20260309_0006_create_mindmaps_and_nodes.py`
+  - 新增 schema：`backend/app/schemas/mindmap.py`
+  - 新增服务：`backend/app/services/mindmap_service.py`
+  - 路由扩展：`GET /api/assets/{assetId}/mindmap`、`POST /api/assets/{assetId}/mindmap/rebuild`
+  - 任务扩展：`enqueue_generate_asset_mindmap`，并在解析成功后自动触发
+- 前端：
+  - 新增导图面板：`frontend/src/components/MindmapPanel.vue`
+  - 工作区接入导图加载/重建/节点跳转：`frontend/src/pages/workspace/WorkspacePage.vue`
+  - API 扩展：`frontend/src/api/assets.ts`、`frontend/src/api/assets.js`
+- 文档：
+  - `docs/checklist.md` 已将 `Spec 08` 标记为完成并补充交付记录
+
+## 本轮验证结果
+
+- `python3 -m compileall backend/app backend/main.py`：通过
+- `python3 -m compileall backend/alembic`：通过
+- `npm run build`：通过

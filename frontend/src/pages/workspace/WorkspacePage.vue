@@ -6,24 +6,29 @@ import {
   createAssetChatSession,
   fetchAssetChatSessions,
   fetchAssetDetail,
+  fetchAssetMindmap,
   fetchAssetParseStatus,
   fetchAssetParsedDocument,
   fetchChatSessionMessages,
   fetchAssetPdfMeta,
   getAssetPdfUrl,
   previewAnchor,
+  rebuildAssetMindmap,
   retryAssetParse,
   sendChatSessionMessage,
   type AnchorPreviewResponse,
   type AssetDetail,
+  type AssetMindmapResponse,
   type AssetParseStatusResponse,
   type AssetParsedDocumentResponse,
   type AssetPdfDescriptor,
   type ChatCitationItem,
   type ChatMessageItem,
   type ChatSessionItem,
+  type MindmapNodeItem,
   type ParsedDocumentBlock,
 } from '@/api/assets';
+import MindmapPanel from '@/components/MindmapPanel.vue';
 import PdfReaderPanel from '@/components/PdfReaderPanel.vue';
 import { renderMarkdownToSafeHtml } from '@/utils/markdown';
 import { normalizeBlockDisplayText } from '@/utils/text';
@@ -35,10 +40,13 @@ const asset = ref<AssetDetail | null>(null);
 const parseStatus = ref<AssetParseStatusResponse | null>(null);
 const parsedDocumentResponse = ref<AssetParsedDocumentResponse | null>(null);
 const pdfMeta = ref<AssetPdfDescriptor | null>(null);
+const mindmapData = ref<AssetMindmapResponse | null>(null);
 const loading = ref(true);
 const errorMessage = ref('');
 const resourceWarning = ref('');
+const mindmapError = ref('');
 const retrying = ref(false);
+const rebuildingMindmap = ref(false);
 const anchorError = ref('');
 const anchorPreview = ref<AnchorPreviewResponse | null>(null);
 const selectedTextSnippet = ref('');
@@ -88,6 +96,11 @@ const activeSession = computed(() => chatSessions.value.find((item) => item.id =
 
 const canRenderReader = computed(() => Boolean(asset.value && pdfMeta.value));
 const canAskQuestion = computed(() => (asset.value?.basic_resources.kb_status ?? '') === 'ready');
+const shouldPollWorkspace = computed(() => {
+  const parseInProgress = parseStatus.value ? ['queued', 'processing'].includes(parseStatus.value.parse_status) : false;
+  const mindmapInProgress = (asset.value?.basic_resources.mindmap_status ?? '') === 'processing';
+  return parseInProgress || mindmapInProgress;
+});
 
 const parseTaskLabel = computed(() => parseStatus.value?.latest_parse?.task.state ?? '未开始');
 
@@ -119,7 +132,7 @@ function stopParsePolling() {
 function syncParsePolling() {
   stopParsePolling();
 
-  if (!parseStatus.value || !['queued', 'processing'].includes(parseStatus.value.parse_status)) {
+  if (!shouldPollWorkspace.value) {
     return;
   }
 
@@ -138,6 +151,7 @@ async function loadWorkspace() {
   errorMessage.value = '';
   resourceWarning.value = '';
   chatError.value = '';
+  mindmapError.value = '';
 
   try {
     const [assetDetail, latestParseStatus] = await Promise.all([
@@ -149,10 +163,12 @@ async function loadWorkspace() {
     parseStatus.value = latestParseStatus;
     parsedDocumentResponse.value = null;
     pdfMeta.value = null;
+    mindmapData.value = null;
 
-    const [parsedDocumentResult, pdfMetaResult] = await Promise.allSettled([
+    const [parsedDocumentResult, pdfMetaResult, mindmapResult] = await Promise.allSettled([
       fetchAssetParsedDocument(assetId.value),
       fetchAssetPdfMeta(assetId.value),
+      fetchAssetMindmap(assetId.value),
     ]);
     const warnings: string[] = [];
 
@@ -166,6 +182,12 @@ async function loadWorkspace() {
       pdfMeta.value = pdfMetaResult.value;
     } else {
       warnings.push('PDF 资源加载失败');
+    }
+
+    if (mindmapResult.status === 'fulfilled') {
+      mindmapData.value = mindmapResult.value;
+    } else {
+      mindmapError.value = '导图加载失败';
     }
 
     resourceWarning.value = warnings.join('；');
@@ -194,6 +216,19 @@ async function handleRetryParse() {
     errorMessage.value = normalizeErrorMessage(error, '重新解析失败。');
   } finally {
     retrying.value = false;
+  }
+}
+
+async function handleRebuildMindmap() {
+  rebuildingMindmap.value = true;
+  mindmapError.value = '';
+  try {
+    await rebuildAssetMindmap(assetId.value);
+    await loadWorkspace();
+  } catch (error) {
+    mindmapError.value = normalizeErrorMessage(error, '重建导图失败。');
+  } finally {
+    rebuildingMindmap.value = false;
   }
 }
 
@@ -442,6 +477,22 @@ function jumpToCitation(citation: ChatCitationItem) {
   focusPage(block.page_no, preferredBlockId);
 }
 
+function handleMindmapNodeClick(node: MindmapNodeItem) {
+  const preferredBlockId = node.block_ids[0] ?? null;
+  if (node.page_no !== null) {
+    focusPage(node.page_no, preferredBlockId);
+    return;
+  }
+  if (!preferredBlockId) {
+    return;
+  }
+  const block = blockById.value[preferredBlockId];
+  if (!block) {
+    return;
+  }
+  focusPage(block.page_no, preferredBlockId);
+}
+
 onMounted(() => {
   void loadWorkspace();
 });
@@ -456,7 +507,7 @@ onUnmounted(() => {
     <section class="workspace-shell">
       <header class="workspace-header">
         <div>
-          <p class="page-kicker">Workspace / Spec 07</p>
+          <p class="page-kicker">Workspace / Spec 08</p>
           <h1 v-if="asset">{{ asset.title }}</h1>
           <h1 v-else>阅读器工作区</h1>
         </div>
@@ -534,6 +585,17 @@ onUnmounted(() => {
               <p v-else class="workspace-muted">
                 解析结果尚未生成目录结构。
               </p>
+            </section>
+
+            <section class="workspace-panel">
+              <MindmapPanel
+                :mindmap-data="mindmapData"
+                :loading="false"
+                :error-message="mindmapError"
+                :rebuilding="rebuildingMindmap"
+                @node-click="handleMindmapNodeClick"
+                @rebuild="handleRebuildMindmap"
+              />
             </section>
 
             <section class="workspace-panel">
@@ -705,6 +767,7 @@ onUnmounted(() => {
                 <li>MinerU 状态：{{ parseTaskLabel }}</li>
                 <li>解析进度：{{ parseProgressLabel }}</li>
                 <li>parsed_json：{{ parsedDocument ? '已就绪' : '未就绪' }}</li>
+                <li>导图状态：{{ mindmapData?.mindmap_status ?? asset.basic_resources.mindmap_status }}</li>
               </ul>
 
               <div class="workspace-actions">
