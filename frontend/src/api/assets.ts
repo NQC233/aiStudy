@@ -211,6 +211,64 @@ export interface AnchorPreviewResponse {
   selector_payload: Record<string, unknown>;
 }
 
+export type NoteAnchorType = 'text_selection' | 'mindmap_node' | 'knowledge_point';
+
+export interface NoteAnchorPayload {
+  anchor_type: NoteAnchorType;
+  page_no?: number | null;
+  block_id?: string | null;
+  paragraph_no?: number | null;
+  selected_text?: string | null;
+  selector_type?: string | null;
+  selector_payload?: Record<string, unknown>;
+}
+
+export interface CreateNoteRequest {
+  anchor: NoteAnchorPayload;
+  title?: string | null;
+  content: string;
+}
+
+export interface UpdateNoteRequest {
+  title?: string | null;
+  content?: string | null;
+}
+
+export interface NoteAnchorItem {
+  id: string;
+  anchor_type: NoteAnchorType;
+  page_no: number | null;
+  block_id: string | null;
+  paragraph_no: number | null;
+  selected_text: string | null;
+  selector_type: string;
+  selector_payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface NoteItem {
+  id: string;
+  asset_id: string;
+  user_id: string;
+  title: string | null;
+  content: string;
+  anchor: NoteAnchorItem;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NoteListResponse {
+  asset_id: string;
+  total: number;
+  anchor_type: NoteAnchorType | null;
+  notes: NoteItem[];
+}
+
+export interface NoteDeleteResponse {
+  note_id: string;
+  deleted: boolean;
+}
+
 export interface ChatSessionItem {
   id: string;
   asset_id: string;
@@ -346,6 +404,36 @@ async function postJson<T>(path: string, payload: unknown): Promise<T> {
 }
 
 
+async function patchJson<T>(path: string, payload: unknown): Promise<T> {
+  const response = await requestWithTimeout(`${API_BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
+  }
+
+  return response.json() as Promise<T>;
+}
+
+
+async function deleteJson<T>(path: string): Promise<T> {
+  const response = await requestWithTimeout(`${API_BASE_URL}${path}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
+  }
+
+  return response.json() as Promise<T>;
+}
+
+
 export function fetchAssets(): Promise<AssetListItem[]> {
   return requestJson<AssetListItem[]>('/api/assets');
 }
@@ -434,6 +522,27 @@ export async function rebuildAssetMindmap(assetId: string): Promise<AssetMindmap
 
 export function previewAnchor(assetId: string, payload: AnchorPreviewRequest): Promise<AnchorPreviewResponse> {
   return postJson<AnchorPreviewResponse>(`/api/assets/${assetId}/anchor-preview`, payload);
+}
+
+
+export function createAssetNote(assetId: string, payload: CreateNoteRequest): Promise<NoteItem> {
+  return postJson<NoteItem>(`/api/assets/${assetId}/notes`, payload);
+}
+
+
+export function fetchAssetNotes(assetId: string, anchorType?: NoteAnchorType): Promise<NoteListResponse> {
+  const query = anchorType ? `?anchor_type=${encodeURIComponent(anchorType)}` : '';
+  return requestJson<NoteListResponse>(`/api/assets/${assetId}/notes${query}`);
+}
+
+
+export function updateNote(noteId: string, payload: UpdateNoteRequest): Promise<NoteItem> {
+  return patchJson<NoteItem>(`/api/notes/${noteId}`, payload);
+}
+
+
+export function deleteNote(noteId: string): Promise<NoteDeleteResponse> {
+  return deleteJson<NoteDeleteResponse>(`/api/notes/${noteId}`);
 }
 
 

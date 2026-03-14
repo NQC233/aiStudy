@@ -63,6 +63,28 @@ async function postJson(path, payload) {
     }
     return response.json();
 }
+async function patchJson(path, payload) {
+    const response = await requestWithTimeout(`${API_BASE_URL}${path}`, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+        throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
+    }
+    return response.json();
+}
+async function deleteJson(path) {
+    const response = await requestWithTimeout(`${API_BASE_URL}${path}`, {
+        method: 'DELETE',
+    });
+    if (!response.ok) {
+        throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
+    }
+    return response.json();
+}
 export function fetchAssets() {
     return requestJson('/api/assets');
 }
@@ -119,6 +141,19 @@ export async function rebuildAssetMindmap(assetId) {
 }
 export function previewAnchor(assetId, payload) {
     return postJson(`/api/assets/${assetId}/anchor-preview`, payload);
+}
+export function createAssetNote(assetId, payload) {
+    return postJson(`/api/assets/${assetId}/notes`, payload);
+}
+export function fetchAssetNotes(assetId, anchorType) {
+    const query = anchorType ? `?anchor_type=${encodeURIComponent(anchorType)}` : '';
+    return requestJson(`/api/assets/${assetId}/notes${query}`);
+}
+export function updateNote(noteId, payload) {
+    return patchJson(`/api/notes/${noteId}`, payload);
+}
+export function deleteNote(noteId) {
+    return deleteJson(`/api/notes/${noteId}`);
 }
 export function createAssetChatSession(assetId, title) {
     return postJson(`/api/assets/${assetId}/chat/sessions`, {

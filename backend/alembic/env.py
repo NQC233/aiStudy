@@ -8,6 +8,7 @@ from sqlalchemy import engine_from_config, pool
 from app.core.config import settings
 from app.db.session import Base
 from app.models import (
+    anchor,
     asset,
     asset_file,
     chat_message,
@@ -17,6 +18,7 @@ from app.models import (
     document_parse,
     mindmap,
     mindmap_node,
+    note,
     user,
 )  # noqa: F401
 

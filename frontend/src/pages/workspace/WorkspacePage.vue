@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
 import {
+  createAssetNote,
   createAssetChatSession,
+  deleteNote,
+  fetchAssetNotes,
   fetchAssetChatSessions,
   fetchAssetDetail,
   fetchAssetMindmap,
@@ -16,6 +19,7 @@ import {
   rebuildAssetMindmap,
   retryAssetParse,
   sendChatSessionMessage,
+  updateNote,
   type AnchorPreviewResponse,
   type AssetDetail,
   type AssetMindmapResponse,
@@ -26,6 +30,9 @@ import {
   type ChatMessageItem,
   type ChatSessionItem,
   type MindmapNodeItem,
+  type NoteAnchorType,
+  type NoteItem,
+  type NoteListResponse,
   type ParsedDocumentBlock,
 } from '@/api/assets';
 import MindmapPanel from '@/components/MindmapPanel.vue';
@@ -60,6 +67,18 @@ const chatError = ref('');
 const chatLoading = ref(false);
 const chatSubmitting = ref(false);
 const creatingSession = ref(false);
+const notes = ref<NoteItem[]>([]);
+const notesLoading = ref(false);
+const notesError = ref('');
+const noteFormError = ref('');
+const noteSubmitting = ref(false);
+const noteDeletingId = ref<string | null>(null);
+const noteFilter = ref<'all' | NoteAnchorType>('all');
+const noteAnchorMode = ref<'text_selection' | 'mindmap_node'>('text_selection');
+const noteFormTitle = ref('');
+const noteFormContent = ref('');
+const editingNoteId = ref<string | null>(null);
+const selectedMindmapNode = ref<MindmapNodeItem | null>(null);
 let parsePollTimer: number | null = null;
 
 const parsedDocument = computed(() => parsedDocumentResponse.value?.parsed_json ?? null);
@@ -93,6 +112,9 @@ const resourceById = computed<Record<string, Record<string, unknown>>>(() => {
 
 const tocItems = computed(() => parsedDocument.value?.toc ?? []);
 const activeSession = computed(() => chatSessions.value.find((item) => item.id === activeSessionId.value) ?? null);
+const noteFilterValue = computed<NoteAnchorType | undefined>(() =>
+  noteFilter.value === 'all' ? undefined : noteFilter.value,
+);
 
 const canRenderReader = computed(() => Boolean(asset.value && pdfMeta.value));
 const canAskQuestion = computed(() => (asset.value?.basic_resources.kb_status ?? '') === 'ready');
@@ -116,6 +138,19 @@ const parseProgressLabel = computed(() => {
   }
 
   return '正在同步进度';
+});
+
+const currentAnchorHint = computed(() => {
+  if (noteAnchorMode.value === 'mindmap_node') {
+    if (!selectedMindmapNode.value) {
+      return '点击导图节点后，可按节点锚点创建笔记。';
+    }
+    return `当前导图节点：${selectedMindmapNode.value.title}`;
+  }
+  if (!anchorPreview.value) {
+    return '在阅读器中选中文本后，可按 text_selection 锚点创建笔记。';
+  }
+  return `当前选区：P${anchorPreview.value.page_no} / ${anchorPreview.value.block_id}`;
 });
 
 function normalizeErrorMessage(error: unknown, fallback: string): string {
@@ -196,7 +231,7 @@ async function loadWorkspace() {
       targetPage.value = initialPage;
     }
 
-    await loadChatSessions();
+    await Promise.all([loadChatSessions(), loadNotes()]);
   } catch (error) {
     errorMessage.value = normalizeErrorMessage(error, '工作区加载失败。');
   } finally {
@@ -253,6 +288,7 @@ async function handleSelectionChange(payload: {
     });
 
     anchorPreview.value = response;
+    noteAnchorMode.value = 'text_selection';
     focusPage(response.page_no, response.block_id);
   } catch (error) {
     anchorError.value = normalizeErrorMessage(error, '锚点生成失败。');
@@ -478,6 +514,8 @@ function jumpToCitation(citation: ChatCitationItem) {
 }
 
 function handleMindmapNodeClick(node: MindmapNodeItem) {
+  selectedMindmapNode.value = node;
+  noteAnchorMode.value = 'mindmap_node';
   const preferredBlockId = node.block_ids[0] ?? null;
   if (node.page_no !== null) {
     focusPage(node.page_no, preferredBlockId);
@@ -493,6 +531,208 @@ function handleMindmapNodeClick(node: MindmapNodeItem) {
   focusPage(block.page_no, preferredBlockId);
 }
 
+function resolveNoteAnchorPage(note: NoteItem): number | null {
+  if (note.anchor.page_no !== null) {
+    return note.anchor.page_no;
+  }
+  if (!note.anchor.block_id) {
+    return null;
+  }
+  return blockById.value[note.anchor.block_id]?.page_no ?? null;
+}
+
+function applyTextAnchorFromNote(note: NoteItem, pageNo: number | null) {
+  const blockId = note.anchor.block_id;
+  if (pageNo === null || !blockId) {
+    return;
+  }
+
+  anchorPreview.value = {
+    asset_id: assetId.value,
+    page_no: pageNo,
+    block_id: blockId,
+    paragraph_no: note.anchor.paragraph_no,
+    selected_text: note.anchor.selected_text ?? note.content.slice(0, 120),
+    selector_type: note.anchor.selector_type,
+    selector_payload: note.anchor.selector_payload,
+  };
+  selectedTextSnippet.value = note.anchor.selected_text ?? '';
+}
+
+function jumpToNote(note: NoteItem) {
+  const pageNo = resolveNoteAnchorPage(note);
+  const blockId = note.anchor.block_id;
+
+  if (pageNo !== null) {
+    focusPage(pageNo, blockId);
+  } else if (blockId) {
+    const block = blockById.value[blockId];
+    if (block) {
+      focusPage(block.page_no, blockId);
+    }
+  }
+
+  if (note.anchor.anchor_type === 'mindmap_node') {
+    noteAnchorMode.value = 'mindmap_node';
+  } else {
+    noteAnchorMode.value = 'text_selection';
+    applyTextAnchorFromNote(note, pageNo);
+  }
+}
+
+function formatNoteTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString();
+}
+
+function formatNoteAnchor(note: NoteItem): string {
+  const anchor = note.anchor;
+  if (anchor.anchor_type === 'mindmap_node') {
+    const nodeKey = anchor.selector_payload.node_key;
+    const readableKey = typeof nodeKey === 'string' && nodeKey.trim() ? nodeKey : 'unknown';
+    const pageLabel = anchor.page_no !== null ? `P${anchor.page_no}` : '页码未知';
+    return `导图节点 ${readableKey} · ${pageLabel}`;
+  }
+  const pageLabel = anchor.page_no !== null ? `P${anchor.page_no}` : '页码未知';
+  const blockLabel = anchor.block_id ?? '页级定位';
+  return `${anchor.anchor_type} · ${pageLabel} / ${blockLabel}`;
+}
+
+function buildNoteAnchorPayload() {
+  if (noteAnchorMode.value === 'mindmap_node') {
+    const node = selectedMindmapNode.value;
+    if (!node) {
+      throw new Error('请先点击导图节点，再创建导图锚点笔记。');
+    }
+    const preferredBlockId = node.block_ids[0] ?? null;
+    return {
+      anchor_type: 'mindmap_node' as const,
+      page_no: node.page_no,
+      block_id: preferredBlockId,
+      selector_type: 'mindmap_node',
+      selector_payload: {
+        node_key: node.node_key,
+        block_id: preferredBlockId,
+      },
+    };
+  }
+
+  if (!anchorPreview.value) {
+    throw new Error('请先在阅读器中选中文本，再创建文本锚点笔记。');
+  }
+  return {
+    anchor_type: 'text_selection' as const,
+    page_no: anchorPreview.value.page_no,
+    block_id: anchorPreview.value.block_id,
+    paragraph_no: anchorPreview.value.paragraph_no,
+    selected_text: anchorPreview.value.selected_text,
+    selector_type: anchorPreview.value.selector_type,
+    selector_payload: anchorPreview.value.selector_payload,
+  };
+}
+
+function resetNoteForm() {
+  editingNoteId.value = null;
+  noteFormTitle.value = '';
+  noteFormContent.value = '';
+  noteFormError.value = '';
+}
+
+function handleEditNote(note: NoteItem) {
+  editingNoteId.value = note.id;
+  noteFormTitle.value = note.title ?? '';
+  noteFormContent.value = note.content;
+  noteFormError.value = '';
+  jumpToNote(note);
+}
+
+function cancelEditNote() {
+  resetNoteForm();
+}
+
+async function loadNotes() {
+  notesLoading.value = true;
+  notesError.value = '';
+  try {
+    const response: NoteListResponse = await fetchAssetNotes(assetId.value, noteFilterValue.value);
+    notes.value = response.notes;
+  } catch (error) {
+    notesError.value = normalizeErrorMessage(error, '笔记列表加载失败。');
+    notes.value = [];
+  } finally {
+    notesLoading.value = false;
+  }
+}
+
+async function handleSubmitNote() {
+  const content = noteFormContent.value.trim();
+  if (!content) {
+    noteFormError.value = '笔记内容不能为空。';
+    return;
+  }
+  if (noteSubmitting.value) {
+    return;
+  }
+
+  noteSubmitting.value = true;
+  noteFormError.value = '';
+
+  try {
+    if (editingNoteId.value) {
+      await updateNote(editingNoteId.value, {
+        title: noteFormTitle.value.trim() || null,
+        content,
+      });
+    } else {
+      await createAssetNote(assetId.value, {
+        anchor: buildNoteAnchorPayload(),
+        title: noteFormTitle.value.trim() || null,
+        content,
+      });
+    }
+    resetNoteForm();
+    await loadNotes();
+  } catch (error) {
+    noteFormError.value = normalizeErrorMessage(error, '保存笔记失败。');
+  } finally {
+    noteSubmitting.value = false;
+  }
+}
+
+async function handleDeleteNote(note: NoteItem) {
+  if (noteDeletingId.value) {
+    return;
+  }
+  const confirmed = window.confirm('确认删除这条笔记吗？');
+  if (!confirmed) {
+    return;
+  }
+
+  noteDeletingId.value = note.id;
+  notesError.value = '';
+  try {
+    await deleteNote(note.id);
+    if (editingNoteId.value === note.id) {
+      resetNoteForm();
+    }
+    await loadNotes();
+  } catch (error) {
+    notesError.value = normalizeErrorMessage(error, '删除笔记失败。');
+  } finally {
+    noteDeletingId.value = null;
+  }
+}
+
+watch(
+  () => noteFilter.value,
+  () => {
+    void loadNotes();
+  },
+);
+
 onMounted(() => {
   void loadWorkspace();
 });
@@ -507,7 +747,7 @@ onUnmounted(() => {
     <section class="workspace-shell">
       <header class="workspace-header">
         <div>
-          <p class="page-kicker">Workspace / Spec 08</p>
+          <p class="page-kicker">Workspace / Spec 09</p>
           <h1 v-if="asset">{{ asset.title }}</h1>
           <h1 v-else>阅读器工作区</h1>
         </div>
@@ -640,6 +880,119 @@ onUnmounted(() => {
               </p>
 
               <pre v-if="anchorPreview" class="workspace-json-preview">{{ JSON.stringify(anchorPreview, null, 2) }}</pre>
+            </section>
+
+            <section class="workspace-panel">
+              <header class="workspace-panel__header">
+                <div>
+                  <p class="page-kicker">Notes</p>
+                  <h2>锚点笔记</h2>
+                </div>
+                <select v-model="noteFilter" class="workspace-notes-filter">
+                  <option value="all">全部锚点</option>
+                  <option value="text_selection">文本锚点</option>
+                  <option value="mindmap_node">导图锚点</option>
+                  <option value="knowledge_point">知识点锚点</option>
+                </select>
+              </header>
+
+              <div class="workspace-note-anchor-switch">
+                <button
+                  class="workspace-note-anchor-button"
+                  :class="{ 'workspace-note-anchor-button--active': noteAnchorMode === 'text_selection' }"
+                  type="button"
+                  @click="noteAnchorMode = 'text_selection'"
+                >
+                  选区锚点
+                </button>
+                <button
+                  class="workspace-note-anchor-button"
+                  :class="{ 'workspace-note-anchor-button--active': noteAnchorMode === 'mindmap_node' }"
+                  type="button"
+                  @click="noteAnchorMode = 'mindmap_node'"
+                >
+                  导图锚点
+                </button>
+              </div>
+
+              <p class="workspace-note-anchor-hint">{{ currentAnchorHint }}</p>
+
+              <div class="workspace-note-form">
+                <input
+                  v-model="noteFormTitle"
+                  class="workspace-note-input"
+                  type="text"
+                  placeholder="笔记标题（可选）"
+                >
+                <textarea
+                  v-model="noteFormContent"
+                  class="workspace-note-textarea"
+                  rows="4"
+                  placeholder="输入你的笔记内容（支持 Markdown 纯文本）"
+                />
+              </div>
+
+              <div class="workspace-actions">
+                <button
+                  class="toolbar-button"
+                  type="button"
+                  :disabled="noteSubmitting || !noteFormContent.trim()"
+                  @click="handleSubmitNote"
+                >
+                  {{ noteSubmitting ? '保存中...' : (editingNoteId ? '保存修改' : '创建笔记') }}
+                </button>
+                <button
+                  v-if="editingNoteId"
+                  class="toolbar-button toolbar-button--ghost"
+                  type="button"
+                  :disabled="noteSubmitting"
+                  @click="cancelEditNote"
+                >
+                  取消编辑
+                </button>
+              </div>
+
+              <p v-if="noteFormError" class="workspace-parse-error">
+                {{ noteFormError }}
+              </p>
+              <p v-if="notesError" class="workspace-parse-error">
+                {{ notesError }}
+              </p>
+
+              <div class="workspace-note-list">
+                <p v-if="notesLoading" class="workspace-muted">正在加载笔记...</p>
+                <p v-else-if="notes.length === 0" class="workspace-muted">当前资产还没有笔记，先从选区或导图节点创建一条。</p>
+
+                <article
+                  v-for="note in notes"
+                  :key="note.id"
+                  class="workspace-note-item"
+                >
+                  <header class="workspace-note-item__header">
+                    <strong>{{ note.title || '未命名笔记' }}</strong>
+                    <span>{{ formatNoteTime(note.updated_at) }}</span>
+                  </header>
+                  <p class="workspace-note-item__anchor">{{ formatNoteAnchor(note) }}</p>
+                  <p class="workspace-note-item__content">{{ note.content }}</p>
+                  <p v-if="note.anchor.selected_text" class="workspace-note-item__quote">{{ note.anchor.selected_text }}</p>
+                  <div class="workspace-note-item__actions">
+                    <button class="toolbar-button toolbar-button--ghost" type="button" @click="jumpToNote(note)">
+                      回跳
+                    </button>
+                    <button class="toolbar-button toolbar-button--ghost" type="button" @click="handleEditNote(note)">
+                      编辑
+                    </button>
+                    <button
+                      class="toolbar-button"
+                      type="button"
+                      :disabled="noteDeletingId === note.id"
+                      @click="handleDeleteNote(note)"
+                    >
+                      {{ noteDeletingId === note.id ? '删除中...' : '删除' }}
+                    </button>
+                  </div>
+                </article>
+              </div>
             </section>
 
             <section class="workspace-panel">

@@ -16,6 +16,7 @@ from app.services.mindmap_service import (
     get_asset_mindmap,
     run_asset_mindmap_pipeline,
 )
+from app.services.note_service import create_asset_note, delete_note, list_asset_notes, update_note
 from app.services.retrieval_service import (
     enqueue_asset_chunk_rebuild,
     list_asset_chunks,
@@ -37,10 +38,14 @@ __all__ = [
     "list_chat_session_messages",
     "get_asset_parse_status",
     "list_assets",
+    "list_asset_notes",
     "run_parse_pipeline",
     "run_asset_mindmap_pipeline",
     "run_asset_kb_pipeline",
     "search_asset_chunks",
     "seed_dev_user_and_assets",
+    "create_asset_note",
+    "update_note",
+    "delete_note",
     "validate_pdf_upload",
 ]

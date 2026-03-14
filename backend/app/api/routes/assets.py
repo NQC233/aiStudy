@@ -13,10 +13,12 @@ from app.schemas.document_chunk import (
 )
 from app.schemas.document_parse import AssetParseRetryResponse, AssetParseStatusResponse
 from app.schemas.mindmap import AssetMindmapRebuildResponse, AssetMindmapResponse
+from app.schemas.note import AnchorType, CreateNoteRequest, NoteItemResponse, NoteListResponse
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
 from app.schemas.asset_upload import AssetUploadResponse
 from app.schemas.chat import ChatSessionCreateRequest, ChatSessionItem
 from app.services import (
+    create_asset_note,
     create_asset_chat_session,
     create_uploaded_asset,
     enqueue_asset_mindmap_rebuild,
@@ -24,6 +26,7 @@ from app.services import (
     enqueue_asset_parse_retry,
     get_asset_mindmap,
     get_asset_parse_status,
+    list_asset_notes,
     list_asset_chat_sessions,
     list_asset_chunks,
     search_asset_chunks,
@@ -219,6 +222,44 @@ def preview_asset_anchor_endpoint(
 ) -> AssetAnchorPreviewResponse:
     """首期只做结构校验和标准化，不做持久化。"""
     return preview_asset_anchor(db, asset_id, payload)
+
+
+@router.post(
+    "/{asset_id}/notes",
+    response_model=NoteItemResponse,
+    summary="创建资产锚点笔记",
+)
+def create_asset_note_endpoint(
+    asset_id: str,
+    payload: CreateNoteRequest,
+    db: Session = Depends(get_db),
+) -> NoteItemResponse:
+    """基于文本选区或导图节点锚点创建笔记。"""
+    return create_asset_note(
+        db=db,
+        asset_id=asset_id,
+        user_id=settings.local_dev_user_id,
+        payload=payload,
+    )
+
+
+@router.get(
+    "/{asset_id}/notes",
+    response_model=NoteListResponse,
+    summary="查询资产笔记列表",
+)
+def list_asset_notes_endpoint(
+    asset_id: str,
+    anchor_type: AnchorType | None = None,
+    db: Session = Depends(get_db),
+) -> NoteListResponse:
+    """返回单资产范围下可用于复习和回跳的笔记列表。"""
+    return list_asset_notes(
+        db=db,
+        asset_id=asset_id,
+        user_id=settings.local_dev_user_id,
+        anchor_type=anchor_type,
+    )
 
 
 @router.post("/upload", response_model=AssetUploadResponse, summary="上传 PDF 并创建学习资产")

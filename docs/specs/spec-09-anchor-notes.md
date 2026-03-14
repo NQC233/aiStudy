@@ -309,3 +309,55 @@
 - 导图节点锚点是否已接入真实节点 ID
 - 当前未解决的锚点失配边界
 - 是否可直接进入“笔记驱动知识增强”阶段
+
+## 本轮交接记录（2026-03-12）
+
+### 1) 本轮采用的 `Anchor` / `Note` 表结构
+
+- `anchors`
+  - `id`, `asset_id`, `user_id`
+  - `anchor_type`（`text_selection` / `mindmap_node` / `knowledge_point`）
+  - `page_no`, `block_id`, `paragraph_no`, `selected_text`
+  - `selector_type`, `selector_payload`
+  - `created_at`
+- `notes`
+  - `id`, `asset_id`, `user_id`, `anchor_id`
+  - `title`, `content`
+  - `created_at`, `updated_at`
+
+说明：
+
+- 采用 `Anchor` 与 `Note` 分表，支持“同锚点多笔记”
+- 本轮删除策略为硬删除
+
+### 2) API 最终路径
+
+- `POST /api/assets/{assetId}/notes`
+- `GET /api/assets/{assetId}/notes?anchor_type=text_selection|mindmap_node|knowledge_point`
+- `PATCH /api/notes/{noteId}`
+- `DELETE /api/notes/{noteId}`
+
+### 3) 阅读器笔记回跳粒度
+
+- 当前支持：`page_no + block_id (+ paragraph_no)` 回跳
+- 当 `page_no` 缺失但存在 `block_id` 时，会通过当前 `parsed_json` 的 `block_id -> page_no` 映射回跳
+
+### 4) 导图节点锚点接入情况
+
+- 已接入真实 `node_key` 校验
+- `mindmap_node` 锚点创建时会校验：
+  - `selector_payload.node_key` 是否存在
+  - 节点是否属于当前资产导图
+  - `page_no / block_id` 与节点映射是否冲突
+
+### 5) 当前未解决的锚点失配边界
+
+- 导图重建后若 `node_key` 生成策略变化，历史 `mindmap_node` 锚点可能失配
+- 首期未做软删除、版本化锚点和自动迁移策略
+
+### 6) 是否可进入下一阶段
+
+- 可以直接进入“笔记驱动知识增强”阶段
+- 建议先补两项低风险增强：
+  - `GET /notes` 关键词搜索
+  - 软删除与恢复能力

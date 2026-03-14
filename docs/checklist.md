@@ -51,9 +51,10 @@
 - [x] Spec 06：资产级知识库与 pgvector 检索
 - [x] Spec 07：AI 助教带引用问答
 - [x] Spec 08：思维导图生成与映射
+- [x] Spec 09：锚点笔记
 
 ### 待开始
-- [ ] Spec 09：锚点笔记
+- [ ] 暂无（下一阶段建议从 Spec 10 开始）
 
 ### 暂缓到后续阶段
 
@@ -354,6 +355,53 @@
   - 为导图生成增加质量指标（节点覆盖率、空摘要率）和失败告警
 - 建议提交信息：
   - `feat: add asset mindmap generation mapping and workspace panel`
+
+### Spec 09 交付记录
+
+- 完成内容：
+  - 新增 `anchors`、`notes` 模型与 Alembic 迁移，支持“多笔记挂同锚点”结构
+  - 新增笔记服务层，完成锚点归一化、锚点校验、笔记 CRUD、按资产查询与 `anchor_type` 筛选
+  - 新增笔记接口：
+    - `POST /api/assets/{assetId}/notes`
+    - `GET /api/assets/{assetId}/notes`
+    - `PATCH /api/notes/{noteId}`
+    - `DELETE /api/notes/{noteId}`
+  - 工作区新增锚点笔记面板，支持：
+    - 基于阅读器文本锚点创建笔记
+    - 基于导图节点锚点创建笔记
+    - 列表查看、编辑、删除
+    - 从笔记回跳到原文定位
+  - 统一笔记筛选和复习视图入口（单资产范围，按时间倒序）
+- 主要新增或修改文件：
+  - `backend/alembic/versions/20260312_0007_create_anchors_and_notes.py`
+  - `backend/app/models/anchor.py`
+  - `backend/app/models/note.py`
+  - `backend/app/models/asset.py`
+  - `backend/app/models/user.py`
+  - `backend/app/models/__init__.py`
+  - `backend/alembic/env.py`
+  - `backend/app/schemas/note.py`
+  - `backend/app/schemas/__init__.py`
+  - `backend/app/services/note_service.py`
+  - `backend/app/services/__init__.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/app/api/routes/notes.py`
+  - `backend/app/api/router.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/src/styles/base.css`
+- 验证结果：
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - `npm run build` 已通过
+- 当前已知缺口：
+  - 导图节点锚点依赖 `node_key`，导图重建后若节点键策略变化，历史笔记可能需要迁移
+  - 首期仍为硬删除，未提供软删除与历史恢复
+  - 未引入全文关键词搜索与跨资产复习
+- 下一轮建议：
+  - 进入 `Spec 10：互动式演示文稿`
+  - 或先补充笔记增强能力（关键词搜索、软删除、问答结果一键转笔记）
+- 建议提交信息：
+  - `feat: add anchor note crud and workspace note linking flow`
 
 ## 7. 相关文档
 

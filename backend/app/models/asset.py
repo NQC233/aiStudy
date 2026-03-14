@@ -52,3 +52,5 @@ class Asset(Base):
     mindmaps = relationship("Mindmap", back_populates="asset", cascade="all, delete-orphan")
     chat_sessions = relationship("ChatSession", back_populates="asset", cascade="all, delete-orphan")
     citations = relationship("Citation", back_populates="asset", cascade="all, delete-orphan")
+    anchors = relationship("Anchor", back_populates="asset", cascade="all, delete-orphan")
+    notes = relationship("Note", back_populates="asset", cascade="all, delete-orphan")

@@ -665,6 +665,128 @@ select {
   overflow: auto;
 }
 
+.workspace-notes-filter,
+.workspace-note-input,
+.workspace-note-textarea {
+  width: 100%;
+  border: 1px solid rgba(216, 197, 154, 0.2);
+  background: rgba(5, 13, 24, 0.92);
+  color: var(--text-primary);
+  border-radius: 12px;
+}
+
+.workspace-notes-filter {
+  max-width: 140px;
+  padding: 8px 10px;
+}
+
+.workspace-note-anchor-switch {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.workspace-note-anchor-button {
+  border: 1px solid rgba(216, 197, 154, 0.24);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.workspace-note-anchor-button--active {
+  color: var(--text-primary);
+  border-color: rgba(127, 210, 197, 0.4);
+  background: rgba(127, 210, 197, 0.12);
+}
+
+.workspace-note-anchor-hint {
+  margin: 12px 0 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.workspace-note-form {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-note-input {
+  padding: 10px 12px;
+}
+
+.workspace-note-textarea {
+  padding: 12px 14px;
+  resize: vertical;
+  line-height: 1.7;
+}
+
+.workspace-note-list {
+  margin-top: 14px;
+  max-height: 420px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-note-item {
+  border: 1px solid rgba(216, 197, 154, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+}
+
+.workspace-note-item__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workspace-note-item__header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-note-item__header span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workspace-note-item__anchor {
+  margin: 10px 0 0;
+  color: var(--accent-strong);
+  font-size: 13px;
+}
+
+.workspace-note-item__content {
+  margin: 8px 0 0;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workspace-note-item__quote {
+  margin: 10px 0 0;
+  border-left: 2px solid rgba(127, 210, 197, 0.4);
+  padding-left: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workspace-note-item__actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .workspace-chat-message {
   border: 1px solid rgba(216, 197, 154, 0.12);
   background: rgba(255, 255, 255, 0.02);
