@@ -52,16 +52,16 @@
 - [x] Spec 07：AI 助教带引用问答
 - [x] Spec 08：思维导图生成与映射
 - [x] Spec 09：锚点笔记
+- [x] Spec 10A：异步任务可靠性（自动重试、错误分级、幂等保护）
+- [x] Spec 10B：工作区状态刷新优化
+- [x] Spec 10C：工作区布局与交互重整
 
 ### 待开始
 
-- [ ] Spec 10A：异步任务可靠性
-- [ ] Spec 10B：工作区状态刷新优化
-- [ ] Spec 10C：工作区布局与交互重整
+- [ ] Spec 11：互动式演示文稿
 
 ### 暂缓到后续阶段
 
-- [ ] Spec 11：互动式演示文稿
 - [ ] Spec 12：TTS 与自动翻页
 - [ ] Spec 13：Anki CSV 导出
 - [ ] Spec 14：课后习题
@@ -412,6 +412,86 @@
   - 或先补充笔记增强能力（关键词搜索、软删除、问答结果一键转笔记）
 - 建议提交信息：
   - `feat: add anchor note crud and workspace note linking flow`
+
+### Spec 10A 交付记录（首版）
+
+- 完成内容：
+  - 新增统一任务可靠性模块，提供错误分级、重试退避计算与重试快照构建
+  - Celery 任务改造为 `bind=True`，并为解析 / 知识库 / 导图三类任务接入自动重试能力
+  - 新增 `CELERY_TASK_*` 配置项并同步到 `.env.example`
+  - 解析链路失败元数据结构化，落库 `failure` 与 `retry` 节点
+  - parse 状态响应新增重试观测字段（`error_code/retryable/attempt/max_retries/next_retry_eta`）
+  - 人工重试入口新增“自动重试窗口”防并发语义，避免与自动重试冲突
+- 主要新增或修改文件：
+  - `backend/app/core/task_reliability.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/app/services/document_parse_service.py`
+  - `backend/app/services/retrieval_service.py`
+  - `backend/app/services/mindmap_service.py`
+  - `backend/app/schemas/document_parse.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/app/core/config.py`
+  - `backend/app/workers/celery_app.py`
+  - `backend/tests/test_task_reliability_service.py`
+  - `.env.example`
+- 验证结果：
+  - `python3 -m unittest backend/tests/test_task_reliability_service.py -v` 已通过（9 tests）
+  - `python3 -m compileall backend/app backend/main.py` 已通过
+  - 已补充 10A 收尾验证记录与 API 响应样例（见 `docs/specs/spec-10a-async-task-reliability.md`）
+- 当前已知缺口：
+  - KB 与导图状态接口暂未统一暴露完整重试字段，当前以 parse 侧可观测为主
+  - 真实线上环境的 MinerU / DashScope 抖动演练可继续追加（当前已完成离线异常注入与重试路径校验）
+- 下一轮建议：
+  - 进入 `Spec 10B：工作区状态刷新优化`
+- 建议提交信息：
+  - `feat: add async retry strategy and failure observability for background tasks`
+
+### Spec 10B 交付记录
+
+- 完成内容：
+  - 工作区刷新逻辑拆分为“全量加载（首次/手动）”和“轻量刷新（轮询）”
+  - 轮询由固定 `setInterval + 全量 loadWorkspace` 改为“状态驱动 `setTimeout` 调度 + 轻量刷新”
+  - 轻量刷新仅更新资产与解析状态，并通过状态迁移触发目标性重拉：
+    - parse `!= ready -> ready` 时重拉 `parsed_json`
+    - mindmap `!= ready -> ready` 时重拉导图
+  - 增加轮询防重入，避免并发刷新导致页面抖动
+  - 保留手动“刷新工作区”作为全量同步兜底
+  - 前端 parse 状态类型补齐可靠性字段契约
+- 主要新增或修改文件：
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/src/api/assets.ts`
+- 验证结果：
+  - `npm run build` 已通过
+- 当前已知缺口：
+  - 尚未补充“优化前后 Network 请求对比截图”和录屏证据
+  - 当前轮询仍为 HTTP pull，SSE/WebSocket 仅保留后续扩展方向
+- 下一轮建议：
+  - 进入 `Spec 10C：工作区布局与交互重整`
+- 建议提交信息：
+  - `perf: optimize workspace polling with light refresh and transition-based fetch`
+
+### Spec 10C 交付记录
+
+- 完成内容：
+  - 工作区右侧改为 Tab 化交互（问答 / 笔记 / 导图 / 状态），一次只聚焦一个主面板
+  - 问答与笔记面板保留原有交互能力，切换 Tab 时通过 `v-show` 保持输入和列表状态
+  - 状态面板统一收敛目录导航、定位信息、锚点预览和解析流水状态，减少默认信息噪音
+  - 调整主布局比例，提升阅读区与右侧主面板的可用宽度
+  - 增加右侧面板 sticky 与移动端降级策略，避免窄屏下布局拥挤
+  - 页面标识更新为 `Workspace / Spec 10C`
+- 主要新增或修改文件：
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/src/styles/base.css`
+- 验证结果：
+  - `npm run build` 已通过
+- 当前已知缺口：
+  - 仅完成“保守优化”视觉策略，未进入专注模式抽屉（方案三）实现
+  - 仍需补充桌面/移动端对比截图作为体验验收证据
+- 下一轮建议：
+  - 进入 `Spec 11：互动式演示文稿`
+  - 或先补充方案三的前置技术设计（focus mode + drawer 交互）
+- 建议提交信息：
+  - `feat: redesign workspace sidebar with tabbed interaction layout`
 
 ## 7. 相关文档
 

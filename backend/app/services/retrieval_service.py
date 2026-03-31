@@ -21,8 +21,15 @@ from app.schemas.document_chunk import (
     RetrievalSearchHit,
 )
 from app.schemas.reader import ParsedDocumentPayload
-from app.services.chunk_builder_service import ChunkBuildResult, build_chunks_from_parsed_payload
-from app.services.embedding_service import EmbeddingConfigurationError, EmbeddingRequestError, embed_texts
+from app.services.chunk_builder_service import (
+    ChunkBuildResult,
+    build_chunks_from_parsed_payload,
+)
+from app.services.embedding_service import (
+    EmbeddingConfigurationError,
+    EmbeddingRequestError,
+    embed_texts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +37,15 @@ logger = logging.getLogger(__name__)
 def _require_asset(db: Session, asset_id: str) -> Asset:
     asset = db.get(Asset, asset_id)
     if asset is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到对应的学习资产。")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="未找到对应的学习资产。"
+        )
     return asset
 
 
-def _get_latest_asset_file(db: Session, asset_id: str, file_type: str) -> AssetFile | None:
+def _get_latest_asset_file(
+    db: Session, asset_id: str, file_type: str
+) -> AssetFile | None:
     statement = (
         select(AssetFile)
         .where(AssetFile.asset_id == asset_id, AssetFile.file_type == file_type)
@@ -54,7 +65,9 @@ def _get_latest_succeeded_parse(db: Session, asset_id: str) -> DocumentParse | N
 
 def _download_bytes(public_url: str) -> bytes:
     try:
-        with urlopen(public_url, timeout=settings.remote_file_fetch_timeout_sec) as response:
+        with urlopen(
+            public_url, timeout=settings.remote_file_fetch_timeout_sec
+        ) as response:
             return response.read()
     except HTTPError as exc:
         raise RuntimeError(f"读取 parsed_json 失败：HTTP {exc.code}") from exc
@@ -62,7 +75,9 @@ def _download_bytes(public_url: str) -> bytes:
         raise RuntimeError("读取 parsed_json 超时，请检查 OSS/外链可用性。") from exc
     except URLError as exc:
         if isinstance(exc.reason, (TimeoutError, socket.timeout)):
-            raise RuntimeError("读取 parsed_json 超时，请检查 OSS/外链可用性。") from exc
+            raise RuntimeError(
+                "读取 parsed_json 超时，请检查 OSS/外链可用性。"
+            ) from exc
         raise RuntimeError("读取 parsed_json 失败：远端地址不可达。") from exc
 
 
@@ -130,10 +145,19 @@ def _embed_all_chunks(db: Session, asset_id: str) -> int:
     return len(chunks)
 
 
-def list_asset_chunks(db: Session, asset_id: str, limit: int = 100) -> AssetChunkListResponse:
+def list_asset_chunks(
+    db: Session, asset_id: str, limit: int = 100
+) -> AssetChunkListResponse:
     asset = _require_asset(db, asset_id)
     safe_limit = max(1, min(limit, 500))
-    total_count = db.scalar(select(func.count()).select_from(DocumentChunk).where(DocumentChunk.asset_id == asset_id)) or 0
+    total_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(DocumentChunk)
+            .where(DocumentChunk.asset_id == asset_id)
+        )
+        or 0
+    )
 
     statement = (
         select(DocumentChunk)
@@ -169,7 +193,11 @@ def enqueue_asset_chunk_rebuild(db: Session, asset_id: str) -> tuple[Asset, bool
     return asset, True
 
 
-def run_asset_kb_pipeline(db: Session, asset_id: str) -> dict[str, str | int | None]:
+def run_asset_kb_pipeline(
+    db: Session,
+    asset_id: str,
+    retry_meta: dict[str, str | int | bool | None] | None = None,
+) -> dict[str, str | int | None]:
     """执行 document_chunks 构建和向量化。"""
     asset = _require_asset(db, asset_id)
     latest_parse = _get_latest_succeeded_parse(db, asset_id)
@@ -204,7 +232,12 @@ def run_asset_kb_pipeline(db: Session, asset_id: str) -> dict[str, str | int | N
             chunk.embedding_status = "failed"
         asset.kb_status = "failed"
         db.commit()
-        logger.exception("资产知识库构建失败: asset_id=%s", asset_id, exc_info=exc)
+        logger.exception(
+            "资产知识库构建失败: asset_id=%s retry_meta=%s",
+            asset_id,
+            retry_meta,
+            exc_info=exc,
+        )
         raise
 
 
@@ -217,7 +250,9 @@ def search_asset_chunks(
     _require_asset(db, asset_id)
     normalized_query = query.strip()
     if not normalized_query:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query 不能为空。")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="query 不能为空。"
+        )
 
     try:
         query_embeddings = embed_texts([normalized_query], text_type="query")
@@ -228,10 +263,14 @@ def search_asset_chunks(
         ) from exc
 
     if not query_embeddings:
-        return AssetRetrievalSearchResponse(asset_id=asset_id, query=normalized_query, top_k=top_k, results=[])
+        return AssetRetrievalSearchResponse(
+            asset_id=asset_id, query=normalized_query, top_k=top_k, results=[]
+        )
     query_embedding = query_embeddings[0]
 
-    distance = DocumentChunk.embedding.cosine_distance(query_embedding).label("distance")
+    distance = DocumentChunk.embedding.cosine_distance(query_embedding).label(
+        "distance"
+    )
     statement = (
         select(DocumentChunk, distance)
         .where(
@@ -265,4 +304,6 @@ def search_asset_chunks(
             )
         )
 
-    return AssetRetrievalSearchResponse(asset_id=asset_id, query=normalized_query, top_k=top_k, results=results)
+    return AssetRetrievalSearchResponse(
+        asset_id=asset_id, query=normalized_query, top_k=top_k, results=results
+    )

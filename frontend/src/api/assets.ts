@@ -60,6 +60,11 @@ export interface AssetParseStatusResponse {
     markdown_storage_key: string | null;
     json_storage_key: string | null;
     raw_response_storage_key: string | null;
+    error_code: string | null;
+    retryable: boolean | null;
+    attempt: number | null;
+    max_retries: number | null;
+    next_retry_eta: string | null;
     task: {
       task_id: string | null;
       data_id: string | null;
@@ -98,6 +103,8 @@ export interface MindmapNodeItem {
   section_path: string[];
   block_ids: string[];
   selector_payload: Record<string, unknown>;
+  node_type: string;
+  stage: string | null;
 }
 
 export interface MindmapSnapshot {

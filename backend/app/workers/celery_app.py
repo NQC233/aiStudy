@@ -15,6 +15,7 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="Asia/Shanghai",
     enable_utc=False,
+    task_track_started=True,
 )
 
 celery_app.autodiscover_tasks(["app.workers"])

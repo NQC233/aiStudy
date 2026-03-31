@@ -319,3 +319,125 @@
 - parse/kb/mindmap 三条链路的失败字段落库位置
 - 状态接口新增字段与示例响应
 - 仍未覆盖的异常场景与后续建议
+
+## 本轮交接记录（2026-03-27）
+
+### 实际完成内容
+
+- 新增 `backend/app/core/task_reliability.py`，实现统一异常分级、重试退避和重试快照能力。
+- 改造 `backend/app/workers/tasks.py`：
+  - 三类核心任务（parse/kb/mindmap）统一支持自动重试。
+  - 统一记录 `attempt/max_retries/next_retry_eta/auto_retry_pending`。
+  - 自动重试前写入状态，避免前端误判为“最终失败”。
+- 改造 `backend/app/services/document_parse_service.py`：
+  - 失败上下文标准化写入 `parser_meta.failure`。
+  - 重试上下文写入 `parser_meta.retry`。
+  - parse 状态汇总响应增加可靠性字段。
+- 改造 `backend/app/api/routes/assets.py` 与 `enqueue_asset_parse_retry`：
+  - 人工重试支持“自动重试窗口”防并发提示。
+- 补齐配置项：`CELERY_TASK_MAX_RETRIES`、`CELERY_TASK_RETRY_BACKOFF_SEC`、`CELERY_TASK_RETRY_BACKOFF_MAX_SEC`、`CELERY_TASK_RETRY_JITTER`。
+- 新增单元测试：`backend/tests/test_task_reliability_service.py`（9 条用例通过）。
+
+### 自动重试最终参数（当前默认）
+
+- `max_retries=3`
+- `backoff_base_seconds=5`
+- `backoff_max_seconds=120`
+- `jitter=true`
+
+### 错误分类映射（首版）
+
+- `MinerUConfigurationError` / `EmbeddingConfigurationError` / `ValueError` / `TypeError` -> `input_invalid`, `retryable=false`
+- `TimeoutError` -> `timeout`, `retryable=true`
+- `MinerURequestError` / `EmbeddingRequestError` / `ConnectionError` / `OSError` -> `external_dependency`, `retryable=true`
+- 其他未知异常 -> `internal_error`, `retryable=true`
+
+### 三条链路失败字段落库位置
+
+- Parse：`document_parses.parser_meta.failure` + `document_parses.parser_meta.retry`
+- KB：当前以 `assets.kb_status` 和 worker 日志可观测为主（`retry_meta` 已透传）
+- Mindmap：`mindmaps.meta.failure_reason` + `mindmaps.meta.retry`
+
+### 状态接口新增字段
+
+- `GET /api/assets/{asset_id}/status` 的 `latest_parse` 新增：
+  - `error_code`
+  - `retryable`
+  - `attempt`
+  - `max_retries`
+  - `next_retry_eta`
+
+### 偏离原计划的地方
+
+- 首版优先完成 parse 侧的可观测字段闭环，KB/mindmap 侧先完成重试能力接入和元数据透传，统一聚合状态接口后置。
+
+### 未解决问题
+
+- 尚未补充真实外部依赖抖动场景下的端到端重试证据（线上 API 联调）。
+
+### 后续接手建议
+
+- 先补足 Spec 10A 的联调验证证据，再进入 Spec 10B。
+- 若前端将轮询统一收敛，建议新增聚合任务状态接口（parse/kb/mindmap 一次返回）。
+
+## 收尾任务完成记录（2026-03-31）
+
+### 10A-4 异常注入与重试路径校验
+
+已完成离线异常注入校验，覆盖内容：
+
+- 配置异常 -> `input_invalid`（不自动重试）
+- 外部依赖异常 -> `external_dependency`（自动重试）
+- 超时异常 -> `timeout`（自动重试）
+- 未知异常 -> `internal_error`（自动重试）
+
+验证命令：
+
+- `python3 -m unittest backend/tests/test_task_reliability_service.py -v`
+- `python3 -m compileall backend/app backend/main.py`
+
+说明：
+
+- 当前已完成离线重试逻辑与错误分级演练。
+- 线上环境下的真实 MinerU / DashScope 抖动演练可作为后续补充证据继续追加，不影响当前 Spec 收口。
+
+### 10A-5 API 响应样例（重试耗尽后人工重试）
+
+示例 1：状态查询（自动重试窗口中）
+
+```json
+{
+  "asset_id": "asset_xxx",
+  "asset_status": "processing",
+  "parse_status": "processing",
+  "error_message": "MinerU 请求失败：service unavailable",
+  "latest_parse": {
+    "status": "failed",
+    "error_code": "external_dependency",
+    "retryable": true,
+    "attempt": 2,
+    "max_retries": 3,
+    "next_retry_eta": "2026-03-31T10:23:11.000000+00:00"
+  }
+}
+```
+
+示例 2：在自动重试窗口点击人工重试
+
+```json
+{
+  "asset_id": "asset_xxx",
+  "parse_status": "processing",
+  "message": "系统正在自动重试解析，请稍后再查看状态。"
+}
+```
+
+示例 3：重试耗尽后人工重试
+
+```json
+{
+  "asset_id": "asset_xxx",
+  "parse_status": "queued",
+  "message": "已重新加入解析队列。"
+}
+```

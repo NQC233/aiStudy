@@ -13,10 +13,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.task_reliability import classify_task_exception
 from app.models.asset import Asset
 from app.models.asset_file import AssetFile
 from app.models.document_parse import DocumentParse
-from app.schemas.document_parse import AssetParseStatusResponse, DocumentParseSummary, ParseProgress, ParseTaskSnapshot
+from app.schemas.document_parse import (
+    AssetParseStatusResponse,
+    DocumentParseSummary,
+    ParseProgress,
+    ParseTaskSnapshot,
+)
 from app.services.mineru_service import (
     MinerUConfigurationError,
     MinerURequestError,
@@ -98,7 +104,9 @@ def _find_first(base_dir: Path, *patterns: str) -> Path | None:
 
 def _load_parse_bundle(extracted_dir: Path) -> tuple[ParseBundle, dict[str, str]]:
     middle_json_path = _find_first(extracted_dir, "middle.json", "*middle.json")
-    content_list_path = _find_first(extracted_dir, "content_list.json", "*content_list.json")
+    content_list_path = _find_first(
+        extracted_dir, "content_list.json", "*content_list.json"
+    )
     markdown_path = _find_first(extracted_dir, "*.md")
 
     if content_list_path is None:
@@ -117,10 +125,16 @@ def _load_parse_bundle(extracted_dir: Path) -> tuple[ParseBundle, dict[str, str]
     markdown = _read_text(markdown_path) if markdown_path is not None else None
     discovered_files = {
         "content_list_path": content_list_path.relative_to(extracted_dir).as_posix(),
-        "middle_json_path": middle_json_path.relative_to(extracted_dir).as_posix() if middle_json_path else "",
-        "markdown_path": markdown_path.relative_to(extracted_dir).as_posix() if markdown_path else "",
+        "middle_json_path": middle_json_path.relative_to(extracted_dir).as_posix()
+        if middle_json_path
+        else "",
+        "markdown_path": markdown_path.relative_to(extracted_dir).as_posix()
+        if markdown_path
+        else "",
     }
-    return ParseBundle(content_list=content_list_data, middle_json=middle_json_data, markdown=markdown), discovered_files
+    return ParseBundle(
+        content_list=content_list_data, middle_json=middle_json_data, markdown=markdown
+    ), discovered_files
 
 
 def _build_task_snapshot(document_parse: DocumentParse) -> ParseTaskSnapshot:
@@ -142,8 +156,40 @@ def _build_task_snapshot(document_parse: DocumentParse) -> ParseTaskSnapshot:
     )
 
 
+def _extract_failure_meta(
+    document_parse: DocumentParse,
+) -> tuple[str | None, bool | None]:
+    failure_meta = document_parse.parser_meta.get("failure")
+    if not isinstance(failure_meta, dict):
+        return None, None
+    error_code = failure_meta.get("error_code")
+    retryable = failure_meta.get("retryable")
+    return str(error_code) if isinstance(error_code, str) else None, bool(
+        retryable
+    ) if isinstance(retryable, bool) else None
+
+
+def _extract_retry_meta(
+    document_parse: DocumentParse,
+) -> tuple[int | None, int | None, str | None]:
+    retry_meta = document_parse.parser_meta.get("retry")
+    if not isinstance(retry_meta, dict):
+        return None, None, None
+
+    attempt = retry_meta.get("attempt")
+    max_retries = retry_meta.get("max_retries")
+    next_retry_eta = retry_meta.get("next_retry_eta")
+    return (
+        int(attempt) if isinstance(attempt, int) else None,
+        int(max_retries) if isinstance(max_retries, int) else None,
+        str(next_retry_eta) if isinstance(next_retry_eta, str) else None,
+    )
+
+
 def to_document_parse_summary(document_parse: DocumentParse) -> DocumentParseSummary:
     """将解析 ORM 记录转换为接口响应。"""
+    error_code, retryable = _extract_failure_meta(document_parse)
+    attempt, max_retries, next_retry_eta = _extract_retry_meta(document_parse)
     return DocumentParseSummary(
         id=document_parse.id,
         asset_id=document_parse.asset_id,
@@ -154,12 +200,19 @@ def to_document_parse_summary(document_parse: DocumentParse) -> DocumentParseSum
         json_storage_key=document_parse.json_storage_key,
         raw_response_storage_key=document_parse.raw_response_storage_key,
         task=_build_task_snapshot(document_parse),
+        error_code=error_code,
+        retryable=retryable,
+        attempt=attempt,
+        max_retries=max_retries,
+        next_retry_eta=next_retry_eta,
         created_at=document_parse.created_at,
         updated_at=document_parse.updated_at,
     )
 
 
-def get_asset_parse_status(db: Session, asset_id: str) -> AssetParseStatusResponse | None:
+def get_asset_parse_status(
+    db: Session, asset_id: str
+) -> AssetParseStatusResponse | None:
     """返回资产的最新解析状态。"""
     asset = db.get(Asset, asset_id)
     if asset is None:
@@ -175,25 +228,40 @@ def get_asset_parse_status(db: Session, asset_id: str) -> AssetParseStatusRespon
     )
 
 
-def enqueue_asset_parse_retry(db: Session, asset_id: str) -> tuple[Asset, bool]:
+def enqueue_asset_parse_retry(db: Session, asset_id: str) -> tuple[Asset, bool, str]:
     """将资产重新推进到等待解析状态。"""
     asset = db.get(Asset, asset_id)
     if asset is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到对应的学习资产。")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="未找到对应的学习资产。"
+        )
 
     original_pdf = _get_original_pdf_file(db, asset_id)
     if original_pdf is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前资产缺少原始 PDF，无法重试解析。")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="当前资产缺少原始 PDF，无法重试解析。",
+        )
 
+    latest_parse = _get_latest_parse(db, asset_id)
     if asset.parse_status in {"queued", "processing"}:
-        return asset, False
+        return asset, False, "当前资产已在解析队列中。"
+
+    if latest_parse is not None and latest_parse.status == "failed":
+        retry_meta = latest_parse.parser_meta.get("retry")
+        failure_meta = latest_parse.parser_meta.get("failure")
+        if isinstance(retry_meta, dict) and isinstance(failure_meta, dict):
+            auto_retry_pending = retry_meta.get("auto_retry_pending")
+            retryable = failure_meta.get("retryable")
+            if auto_retry_pending is True and retryable is True:
+                return asset, False, "系统正在自动重试解析，请稍后再查看状态。"
 
     asset.status = "queued"
     asset.parse_status = "queued"
     asset.parse_error_message = None
     db.commit()
     db.refresh(asset)
-    return asset, True
+    return asset, True, "已重新加入解析队列。"
 
 
 def _task_meta_from_result(result: Any) -> dict[str, Any]:
@@ -213,15 +281,30 @@ def _fail_parse(
     asset: Asset,
     document_parse: DocumentParse,
     message: str,
+    error_code: str,
+    retryable: bool,
+    retry_meta: dict[str, Any] | None = None,
     exception: Exception | None = None,
 ) -> None:
     asset.status = "failed"
     asset.parse_status = "failed"
     asset.parse_error_message = message
     document_parse.status = "failed"
+    merged_retry_meta = retry_meta or {}
+    if merged_retry_meta:
+        merged_retry_meta = {
+            **merged_retry_meta,
+            "auto_retry_pending": False,
+        }
     document_parse.parser_meta = {
         **document_parse.parser_meta,
+        "failure": {
+            "error_code": error_code,
+            "retryable": retryable,
+            "error_message": message,
+        },
         "failure_reason": message,
+        "retry": merged_retry_meta,
     }
     db.commit()
     if exception is not None:
@@ -230,7 +313,11 @@ def _fail_parse(
         logger.error("资产解析失败: asset_id=%s, reason=%s", asset.id, message)
 
 
-def run_parse_pipeline(db: Session, asset_id: str) -> DocumentParse:
+def run_parse_pipeline(
+    db: Session,
+    asset_id: str,
+    retry_meta: dict[str, Any] | None = None,
+) -> DocumentParse:
     """执行单个资产的完整解析链路。"""
     asset = db.get(Asset, asset_id)
     if asset is None:
@@ -241,8 +328,14 @@ def run_parse_pipeline(db: Session, asset_id: str) -> DocumentParse:
         raise ValueError(f"资产缺少原始 PDF 文件: {asset_id}")
 
     latest_parse = _get_latest_parse(db, asset_id)
-    if latest_parse is not None and latest_parse.status == "running" and asset.parse_status == "processing":
-        logger.info("跳过重复解析任务: asset_id=%s parse_id=%s", asset_id, latest_parse.id)
+    if (
+        latest_parse is not None
+        and latest_parse.status == "running"
+        and asset.parse_status == "processing"
+    ):
+        logger.info(
+            "跳过重复解析任务: asset_id=%s parse_id=%s", asset_id, latest_parse.id
+        )
         return latest_parse
 
     asset.status = "processing"
@@ -257,6 +350,7 @@ def run_parse_pipeline(db: Session, asset_id: str) -> DocumentParse:
         parser_meta={
             "source_pdf_url": original_pdf.public_url,
             "task": {},
+            "retry": retry_meta or {},
         },
     )
     db.add(document_parse)
@@ -283,11 +377,31 @@ def run_parse_pipeline(db: Session, asset_id: str) -> DocumentParse:
         }
         if final_result.state in {"failed", "error"}:
             failure_message = final_result.err_msg or "MinerU 返回失败状态。"
-            _fail_parse(db, asset, document_parse, failure_message)
+            failure = classify_task_exception(MinerURequestError(failure_message))
+            _fail_parse(
+                db,
+                asset,
+                document_parse,
+                failure_message,
+                error_code=failure.error_code,
+                retryable=failure.retryable,
+                retry_meta=retry_meta,
+            )
             return document_parse
 
         if not final_result.full_zip_url:
-            _fail_parse(db, asset, document_parse, "MinerU 任务成功但未返回结果包地址。")
+            failure = classify_task_exception(
+                MinerURequestError("MinerU 任务成功但未返回结果包地址。")
+            )
+            _fail_parse(
+                db,
+                asset,
+                document_parse,
+                "MinerU 任务成功但未返回结果包地址。",
+                error_code=failure.error_code,
+                retryable=failure.retryable,
+                retry_meta=retry_meta,
+            )
             return document_parse
 
         raw_zip_bytes = download_parse_zip(final_result.full_zip_url)
@@ -316,7 +430,9 @@ def run_parse_pipeline(db: Session, asset_id: str) -> DocumentParse:
         _upsert_asset_file(db, asset.id, "parsed_json", stored_artifacts.parsed_json)
         _upsert_asset_file(db, asset.id, "parse_raw_zip", stored_artifacts.raw_zip)
         if stored_artifacts.markdown is not None:
-            _upsert_asset_file(db, asset.id, "parsed_markdown", stored_artifacts.markdown)
+            _upsert_asset_file(
+                db, asset.id, "parsed_markdown", stored_artifacts.markdown
+            )
 
         document_parse.json_storage_key = stored_artifacts.parsed_json.storage_key
         document_parse.raw_response_storage_key = stored_artifacts.raw_zip.storage_key
@@ -325,10 +441,17 @@ def run_parse_pipeline(db: Session, asset_id: str) -> DocumentParse:
         document_parse.status = "succeeded"
         document_parse.parser_meta = {
             **document_parse.parser_meta,
+            "failure": {},
+            "retry": {
+                **(retry_meta or {}),
+                "auto_retry_pending": False,
+            },
             "storage": {
                 "parsed_json": stored_artifacts.parsed_json.storage_key,
                 "raw_zip": stored_artifacts.raw_zip.storage_key,
-                "markdown": stored_artifacts.markdown.storage_key if stored_artifacts.markdown else None,
+                "markdown": stored_artifacts.markdown.storage_key
+                if stored_artifacts.markdown
+                else None,
                 "archived_file_count": len(stored_artifacts.archived_files),
             },
         }
@@ -340,11 +463,41 @@ def run_parse_pipeline(db: Session, asset_id: str) -> DocumentParse:
         db.refresh(document_parse)
         return document_parse
     except (MinerUConfigurationError, MinerURequestError) as exc:
-        _fail_parse(db, asset, document_parse, str(exc), exc)
+        failure = classify_task_exception(exc)
+        _fail_parse(
+            db,
+            asset,
+            document_parse,
+            failure.normalized_message,
+            error_code=failure.error_code,
+            retryable=failure.retryable,
+            retry_meta=retry_meta,
+            exception=exc,
+        )
         return document_parse
     except zipfile.BadZipFile as exc:
-        _fail_parse(db, asset, document_parse, "MinerU 返回的结果包不是合法 ZIP。", exc)
+        failure = classify_task_exception(exc)
+        _fail_parse(
+            db,
+            asset,
+            document_parse,
+            "MinerU 返回的结果包不是合法 ZIP。",
+            error_code=failure.error_code,
+            retryable=failure.retryable,
+            retry_meta=retry_meta,
+            exception=exc,
+        )
         return document_parse
     except Exception as exc:  # pragma: no cover - 兜底未知异常
-        _fail_parse(db, asset, document_parse, "解析链路发生未预期错误。", exc)
+        failure = classify_task_exception(exc)
+        _fail_parse(
+            db,
+            asset,
+            document_parse,
+            "解析链路发生未预期错误。",
+            error_code=failure.error_code,
+            retryable=failure.retryable,
+            retry_meta=retry_meta,
+            exception=exc,
+        )
         return document_parse

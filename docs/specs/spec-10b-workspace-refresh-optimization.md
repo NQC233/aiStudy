@@ -266,3 +266,39 @@
 - 状态迁移触发规则（何时重拉 parsed_json/mindmap）
 - 实测请求量对比和卡顿改善结论
 - 当前已知边界与后续建议（SSE/WebSocket 预留）
+
+## 本轮交接记录（2026-03-31）
+
+### 实际完成内容
+
+- 将 `WorkspacePage.vue` 的刷新机制拆分为两条路径：
+  - `loadWorkspace`：全量加载（首次进入、手动刷新、重试后刷新）
+  - `refreshWorkspaceLight`：轻量刷新（轮询使用）
+- 将轮询从固定 `setInterval` 改为状态驱动 `setTimeout`：
+  - 仅在 parse/mindmap 处于进行中时启用轮询
+  - 默认间隔 `4000ms`
+- 轻量刷新只拉取 `asset detail + parse status`，不再每轮重置 `parsed_json/pdf/meta/chat/notes`。
+- 新增状态迁移触发规则：
+  - parse 从非 ready 变为 ready 时，按需重拉 `parsed_json`
+  - mindmap 从非 ready 变为 ready 时，按需重拉导图
+- 增加轮询防重入（`pendingLightRefresh`），避免并发刷新抖动。
+- 手动刷新语义保持为全量同步兜底。
+
+### 轮询分层频率最终参数
+
+- Active 轮询：`4000ms`
+- Idle 阶段：停止自动轮询
+
+### 轻量刷新与全量刷新边界
+
+- 全量刷新：`asset/parse + parsed_json + pdf_meta + mindmap + chat sessions + notes`
+- 轻量刷新：`asset/parse` 主状态 + 基于状态迁移触发的目标性重拉
+
+### 已知边界
+
+- 本轮未补充“优化前后请求量截图/录屏”证据，仅完成代码与构建校验。
+- 当前仍是 HTTP 轮询策略，SSE/WebSocket 作为后续增强方向保留。
+
+### 验证结果
+
+- `npm run build` 通过

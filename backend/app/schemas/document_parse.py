@@ -29,6 +29,11 @@ class DocumentParseSummary(BaseModel):
     json_storage_key: str | None = None
     raw_response_storage_key: str | None = None
     task: ParseTaskSnapshot = Field(default_factory=ParseTaskSnapshot)
+    error_code: str | None = None
+    retryable: bool | None = None
+    attempt: int | None = None
+    max_retries: int | None = None
+    next_retry_eta: str | None = None
     created_at: datetime
     updated_at: datetime
 

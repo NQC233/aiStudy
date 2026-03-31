@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     celery_broker_url: str = "redis://redis:6379/0"
     celery_result_backend: str = "redis://redis:6379/0"
+    celery_task_max_retries: int = 3
+    celery_task_retry_backoff_sec: int = 5
+    celery_task_retry_backoff_max_sec: int = 120
+    celery_task_retry_jitter: bool = True
 
     aliyun_oss_endpoint: str | None = None
     aliyun_oss_bucket: str | None = None
@@ -67,7 +71,11 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         """将逗号分隔的跨域来源转换为列表。"""
-        return [origin.strip() for origin in self.backend_cors_origins.split(",") if origin.strip()]
+        return [
+            origin.strip()
+            for origin in self.backend_cors_origins.split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache
