@@ -29,16 +29,25 @@ from app.schemas.note import (
     NoteListResponse,
 )
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
+from app.schemas.slide_lesson_plan import (
+    AssetLessonPlanRebuildRequest,
+    AssetLessonPlanRebuildResponse,
+    AssetLessonPlanResponse,
+)
+from app.schemas.slide_dsl import AssetSlidesResponse
 from app.schemas.asset_upload import AssetUploadResponse
 from app.schemas.chat import ChatSessionCreateRequest, ChatSessionItem
 from app.services import (
     create_asset_note,
+    enqueue_asset_lesson_plan_rebuild,
     create_asset_chat_session,
     create_uploaded_asset,
     enqueue_asset_mindmap_rebuild,
     enqueue_asset_chunk_rebuild,
     enqueue_asset_parse_retry,
     get_asset_mindmap,
+    get_asset_lesson_plan,
+    get_asset_slides_snapshot,
     get_asset_parse_status,
     list_asset_notes,
     list_asset_chat_sessions,
@@ -56,6 +65,7 @@ from app.services.asset_service import get_asset_detail, list_assets
 from app.workers.tasks import (
     enqueue_build_asset_kb,
     enqueue_generate_asset_mindmap,
+    enqueue_generate_asset_lesson_plan,
     enqueue_parse_asset,
 )
 
@@ -157,6 +167,53 @@ def get_asset_parse_endpoint(
             detail="未找到对应的学习资产。",
         )
     return parse_status
+
+
+@router.get(
+    "/{asset_id}/slides/lesson-plan",
+    response_model=AssetLessonPlanResponse,
+    summary="获取资产 lesson_plan 状态与摘要",
+)
+def get_asset_lesson_plan_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetLessonPlanResponse:
+    """返回 lesson_plan 生成状态、快照与阶段摘要。"""
+    return get_asset_lesson_plan(db, asset_id)
+
+
+@router.get(
+    "/{asset_id}/slides",
+    response_model=AssetSlidesResponse,
+    summary="获取资产 slides DSL 与质量报告",
+)
+def get_asset_slides_endpoint(
+    asset_id: str,
+    db: Session = Depends(get_db),
+) -> AssetSlidesResponse:
+    """返回用于播放页渲染的 slides_dsl 与质量报告。"""
+    return get_asset_slides_snapshot(db, asset_id)
+
+
+@router.post(
+    "/{asset_id}/slides/lesson-plan/rebuild",
+    response_model=AssetLessonPlanRebuildResponse,
+    summary="重建资产 lesson_plan",
+)
+def rebuild_asset_lesson_plan_endpoint(
+    asset_id: str,
+    payload: AssetLessonPlanRebuildRequest,
+    db: Session = Depends(get_db),
+) -> AssetLessonPlanRebuildResponse:
+    """将当前资产推进到 lesson_plan 生成队列。"""
+    asset, should_enqueue, message = enqueue_asset_lesson_plan_rebuild(db, asset_id)
+    if should_enqueue:
+        enqueue_generate_asset_lesson_plan.delay(asset.id, strategy=payload.strategy)
+    return AssetLessonPlanRebuildResponse(
+        asset_id=asset.id,
+        slides_status=asset.slides_status,
+        message=message,
+        strategy=payload.strategy,
+    )
 
 
 @router.post(

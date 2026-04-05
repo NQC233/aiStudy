@@ -1,6 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 180000;
+const PARSED_JSON_REQUEST_TIMEOUT_MS = 30000;
 async function requestWithTimeout(input, init, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
@@ -101,7 +102,26 @@ export function fetchAssetParseStatus(assetId) {
     return requestJson(`/api/assets/${assetId}/status`);
 }
 export function fetchAssetParsedDocument(assetId) {
-    return requestJson(`/api/assets/${assetId}/parsed-json`);
+    return (async () => {
+        const path = `/api/assets/${assetId}/parsed-json`;
+        const attemptFetch = async (timeoutMs) => {
+            const response = await requestWithTimeout(`${API_BASE_URL}${path}`, undefined, timeoutMs);
+            if (!response.ok) {
+                throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
+            }
+            return response.json();
+        };
+        try {
+            return await attemptFetch(PARSED_JSON_REQUEST_TIMEOUT_MS);
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : '';
+            if (!message.includes('请求超时')) {
+                throw error;
+            }
+            return attemptFetch(PARSED_JSON_REQUEST_TIMEOUT_MS + 15000);
+        }
+    })();
 }
 export async function uploadAsset(file, title) {
     const formData = new FormData();
@@ -168,4 +188,20 @@ export function fetchChatSessionMessages(sessionId) {
 }
 export function sendChatSessionMessage(sessionId, payload) {
     return postJson(`/api/chat/sessions/${sessionId}/messages`, payload);
+}
+export function fetchAssetSlides(assetId) {
+    return requestJson(`/api/assets/${assetId}/slides`);
+}
+export async function rebuildAssetSlides(assetId, strategy = 'template') {
+    const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/slides/lesson-plan/rebuild`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ strategy }),
+    });
+    if (!response.ok) {
+        throw new Error(await parseErrorMessage(response, `重建演示内容失败：${response.status}`));
+    }
+    return response.json();
 }

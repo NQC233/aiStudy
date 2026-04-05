@@ -23,22 +23,40 @@ class Asset(Base):
 
     __tablename__ = "assets"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_asset_id)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=generate_asset_id
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     authors: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     abstract: Mapped[str | None] = mapped_column(Text)
     language: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
-    parse_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
+    parse_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="not_started"
+    )
     parse_error_message: Mapped[str | None] = mapped_column(Text)
-    kb_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
-    mindmap_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
-    slides_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_generated")
-    anki_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_generated")
-    quiz_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_generated")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    kb_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="not_started"
+    )
+    mindmap_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="not_started"
+    )
+    slides_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="not_generated"
+    )
+    anki_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="not_generated"
+    )
+    quiz_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="not_generated"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -46,11 +64,31 @@ class Asset(Base):
     )
 
     user = relationship("User", back_populates="assets")
-    files = relationship("AssetFile", back_populates="asset", cascade="all, delete-orphan")
-    document_parses = relationship("DocumentParse", back_populates="asset", cascade="all, delete-orphan")
-    document_chunks = relationship("DocumentChunk", back_populates="asset", cascade="all, delete-orphan")
-    mindmaps = relationship("Mindmap", back_populates="asset", cascade="all, delete-orphan")
-    chat_sessions = relationship("ChatSession", back_populates="asset", cascade="all, delete-orphan")
-    citations = relationship("Citation", back_populates="asset", cascade="all, delete-orphan")
-    anchors = relationship("Anchor", back_populates="asset", cascade="all, delete-orphan")
+    files = relationship(
+        "AssetFile", back_populates="asset", cascade="all, delete-orphan"
+    )
+    document_parses = relationship(
+        "DocumentParse", back_populates="asset", cascade="all, delete-orphan"
+    )
+    document_chunks = relationship(
+        "DocumentChunk", back_populates="asset", cascade="all, delete-orphan"
+    )
+    mindmaps = relationship(
+        "Mindmap", back_populates="asset", cascade="all, delete-orphan"
+    )
+    presentation = relationship(
+        "Presentation",
+        back_populates="asset",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    chat_sessions = relationship(
+        "ChatSession", back_populates="asset", cascade="all, delete-orphan"
+    )
+    citations = relationship(
+        "Citation", back_populates="asset", cascade="all, delete-orphan"
+    )
+    anchors = relationship(
+        "Anchor", back_populates="asset", cascade="all, delete-orphan"
+    )
     notes = relationship("Note", back_populates="asset", cascade="all, delete-orphan")

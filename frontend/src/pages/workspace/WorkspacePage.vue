@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { RouterLink, useRoute } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 
 import {
   createAssetNote,
@@ -16,6 +16,7 @@ import {
   fetchAssetPdfMeta,
   getAssetPdfUrl,
   previewAnchor,
+  rebuildAssetSlides,
   rebuildAssetMindmap,
   retryAssetParse,
   sendChatSessionMessage,
@@ -41,6 +42,7 @@ import { renderMarkdownToSafeHtml } from '@/utils/markdown';
 import { normalizeBlockDisplayText } from '@/utils/text';
 
 const route = useRoute();
+const router = useRouter();
 const assetId = computed(() => route.params.assetId as string);
 
 const asset = ref<AssetDetail | null>(null);
@@ -52,8 +54,12 @@ const loading = ref(false);
 const errorMessage = ref('');
 const resourceWarning = ref('');
 const mindmapError = ref('');
+const slidesActionMessage = ref('');
+const slidesActionError = ref('');
+const slidesStrategy = ref<'template' | 'llm'>('template');
 const retrying = ref(false);
 const rebuildingMindmap = ref(false);
+const rebuildingSlides = ref(false);
 const anchorError = ref('');
 const anchorPreview = ref<AnchorPreviewResponse | null>(null);
 const selectedTextSnippet = ref('');
@@ -85,10 +91,12 @@ let parsePollTimer: number | null = null;
 let pendingLightRefresh = false;
 
 const POLL_INTERVAL_ACTIVE_MS = 4000;
+const SLIDES_PROCESSING_TIMEOUT_MS = 90_000;
 
 type WorkspaceStatusSnapshot = {
   parseStatus: string;
   mindmapStatus: string;
+  slidesStatus: string;
   kbStatus: string;
   parseId: string | null;
 };
@@ -131,6 +139,34 @@ const noteFilterValue = computed<NoteAnchorType | undefined>(() =>
 const canRenderReader = computed(() => Boolean(asset.value && pdfMeta.value));
 const canAskQuestion = computed(() => (asset.value?.basic_resources.kb_status ?? '') === 'ready');
 const parseTaskLabel = computed(() => parseStatus.value?.latest_parse?.task.state ?? '未开始');
+const slidesStatus = computed(() => asset.value?.enhanced_resources.slides_status ?? 'not_generated');
+const canOpenSlides = computed(() => slidesStatus.value === 'ready');
+const slidesProcessingSince = ref<number | null>(null);
+const slidesProcessingHint = computed(() => {
+  if (slidesStatus.value !== 'processing') {
+    return '';
+  }
+  if (slidesProcessingSince.value === null) {
+    return '演示内容正在生成中，页面会在当前工作区自动刷新。';
+  }
+  const elapsedMs = Date.now() - slidesProcessingSince.value;
+  if (elapsedMs >= SLIDES_PROCESSING_TIMEOUT_MS) {
+    return '演示内容仍在生成（超过 90 秒）。建议检查 worker 日志，必要时重试“重新生成演示内容”。';
+  }
+  return '演示内容正在生成中，页面会在当前工作区自动刷新。';
+});
+const slidesLocatorHint = computed(() => {
+  const sourceRaw = route.query.source;
+  const source = Array.isArray(sourceRaw) ? sourceRaw[0] : sourceRaw;
+  if (source !== 'slides') {
+    return '';
+  }
+  const parts = [`已从演示文稿跳转到定位页码 P${targetPage.value}`];
+  if (targetBlockId.value) {
+    parts.push(`块 ${targetBlockId.value}`);
+  }
+  return `${parts.join(' / ')}。`;
+});
 
 const rightTabs = [
   { key: 'qa', label: '问答' },
@@ -181,13 +217,18 @@ function currentStatusSnapshot(): WorkspaceStatusSnapshot {
   return {
     parseStatus: parseStatus.value?.parse_status ?? asset.value?.basic_resources.parse_status ?? 'not_started',
     mindmapStatus: asset.value?.basic_resources.mindmap_status ?? mindmapData.value?.mindmap_status ?? 'not_started',
+    slidesStatus: asset.value?.enhanced_resources.slides_status ?? 'not_generated',
     kbStatus: asset.value?.basic_resources.kb_status ?? 'not_started',
     parseId: parseStatus.value?.latest_parse?.id ?? null,
   };
 }
 
 function shouldUseActivePolling(snapshot: WorkspaceStatusSnapshot): boolean {
-  return ['queued', 'processing'].includes(snapshot.parseStatus) || snapshot.mindmapStatus === 'processing';
+  return (
+    ['queued', 'processing'].includes(snapshot.parseStatus)
+    || snapshot.mindmapStatus === 'processing'
+    || snapshot.slidesStatus === 'processing'
+  );
 }
 
 function syncMindmapStatus(status: string) {
@@ -209,6 +250,16 @@ function syncMindmapStatus(status: string) {
       mindmap: null,
     };
   }
+}
+
+function syncSlidesProcessingClock(status: string) {
+  if (status === 'processing') {
+    if (slidesProcessingSince.value === null) {
+      slidesProcessingSince.value = Date.now();
+    }
+    return;
+  }
+  slidesProcessingSince.value = null;
 }
 
 async function fetchHeavyResources(options?: { fetchParsed?: boolean; fetchPdf?: boolean; fetchMindmap?: boolean }) {
@@ -274,6 +325,7 @@ async function refreshWorkspaceLight() {
     asset.value = assetDetail;
     parseStatus.value = latestParseStatus;
     syncMindmapStatus(assetDetail.basic_resources.mindmap_status);
+    syncSlidesProcessingClock(assetDetail.enhanced_resources.slides_status);
 
     const next = currentStatusSnapshot();
     const parseBecameReady = previous.parseStatus !== 'ready' && next.parseStatus === 'ready';
@@ -319,6 +371,53 @@ function focusPage(pageNo: number, blockId: string | null = null) {
   targetBlockId.value = blockId;
 }
 
+function applyRouteLocatorFromQuery() {
+  const pageRaw = route.query.page;
+  const blockRaw = route.query.blockId;
+  const pageValue = Array.isArray(pageRaw) ? pageRaw[0] : pageRaw;
+  const blockValue = Array.isArray(blockRaw) ? blockRaw[0] : blockRaw;
+  const parsedPage = Number(pageValue);
+
+  if (Number.isFinite(parsedPage) && parsedPage > 0) {
+    targetPage.value = parsedPage;
+  }
+  if (typeof blockValue === 'string') {
+    targetBlockId.value = blockValue.trim() ? blockValue : null;
+  }
+}
+
+async function openSlidesPage() {
+  if (!canOpenSlides.value) {
+    return;
+  }
+  await router.push({
+    name: 'slides-play',
+    params: { assetId: assetId.value },
+  });
+}
+
+async function handleRebuildSlides() {
+  if (rebuildingSlides.value) {
+    return;
+  }
+  rebuildingSlides.value = true;
+  slidesActionError.value = '';
+  slidesActionMessage.value = '';
+
+  try {
+    const response = await rebuildAssetSlides(assetId.value, slidesStrategy.value);
+    slidesActionMessage.value = `${response.message}（策略：${response.strategy}）`;
+    if (response.slides_status === 'processing') {
+      slidesProcessingSince.value = Date.now();
+    }
+    await loadWorkspace();
+  } catch (error) {
+    slidesActionError.value = normalizeErrorMessage(error, '重建演示内容失败。');
+  } finally {
+    rebuildingSlides.value = false;
+  }
+}
+
 async function loadWorkspace() {
   if (loading.value) {
     return;
@@ -338,6 +437,7 @@ async function loadWorkspace() {
 
     asset.value = assetDetail;
     parseStatus.value = latestParseStatus;
+    syncSlidesProcessingClock(assetDetail.enhanced_resources.slides_status);
 
     const [parsedDocumentResult, pdfMetaResult, mindmapResult] = await Promise.allSettled([
       fetchAssetParsedDocument(assetId.value),
@@ -350,7 +450,11 @@ async function loadWorkspace() {
       parsedDocumentResponse.value = parsedDocumentResult.value;
     } else {
       parsedDocumentResponse.value = null;
-      warnings.push('解析索引加载失败');
+      if (assetDetail.basic_resources.parse_status === 'ready') {
+        warnings.push('解析索引暂时不可用（可刷新重试）');
+      } else {
+        warnings.push('解析索引加载失败');
+      }
     }
 
     if (pdfMetaResult.status === 'fulfilled') {
@@ -879,7 +983,15 @@ watch(
   },
 );
 
+watch(
+  () => route.query,
+  () => {
+    applyRouteLocatorFromQuery();
+  },
+);
+
 onMounted(() => {
+  applyRouteLocatorFromQuery();
   void loadWorkspace();
 });
 
@@ -916,11 +1028,49 @@ onUnmounted(() => {
           <div class="workspace-summary__lead">
             <span class="summary-badge">{{ asset.source_type === 'preset' ? '预设论文' : '用户上传' }}</span>
             <span class="summary-badge summary-badge--status">{{ parseStatus?.parse_status ?? asset.basic_resources.parse_status }}</span>
+            <span class="summary-badge">Slides: {{ slidesStatus }}</span>
           </div>
 
           <p class="workspace-authors">{{ asset.authors.join(' · ') }}</p>
           <p class="workspace-abstract">
             {{ asset.abstract || '当前资产还没有摘要内容，后续会由解析链路补充。' }}
+          </p>
+          <div class="workspace-actions">
+            <label class="workspace-muted">
+              <span>生成策略</span>
+              <select v-model="slidesStrategy" class="workspace-notes-filter">
+                <option value="template">template（稳定）</option>
+                <option value="llm">llm（灰度）</option>
+              </select>
+            </label>
+            <button
+              class="toolbar-button"
+              type="button"
+              :disabled="!canOpenSlides"
+              @click="openSlidesPage"
+            >
+              {{ canOpenSlides ? '进入演示播放页' : '演示内容未就绪' }}
+            </button>
+            <button
+              class="toolbar-button toolbar-button--ghost"
+              type="button"
+              :disabled="rebuildingSlides"
+              @click="handleRebuildSlides"
+            >
+              {{ rebuildingSlides ? '生成中...' : '重新生成演示内容' }}
+            </button>
+          </div>
+          <p v-if="slidesActionMessage" class="workspace-muted">
+            {{ slidesActionMessage }}
+          </p>
+          <p v-if="slidesActionError" class="workspace-parse-error">
+            {{ slidesActionError }}
+          </p>
+          <p v-if="slidesLocatorHint" class="workspace-muted">
+            {{ slidesLocatorHint }}
+          </p>
+          <p v-if="slidesProcessingHint" class="workspace-muted">
+            {{ slidesProcessingHint }}
           </p>
           <p v-if="resourceWarning" class="workspace-parse-error">
             {{ resourceWarning }}。你可以先查看状态并重试解析。

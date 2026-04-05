@@ -27,6 +27,10 @@
 - [x] MVP 先做简洁可测试界面
 - [x] Anki 首期只支持 `CSV`
 - [x] 代码注释默认使用中文
+- [x] Agent 治理以仓库根目录 `AGENTS.md` 为最高项目约束，优先于外部技能模板
+- [x] `docs/specs/` 为唯一权威 Spec 目录，`docs/superpowers/` 仅作参考/草稿
+- [x] Slides 重建支持陈旧 `processing` 状态自动回收再入队，避免历史卡死导致不可重试
+- [x] lesson_plan 成功后保持 `slides_status=processing`，仅在 DSL 任务完成后置 `ready`，避免“伪 ready”
 
 ## 3. 当前待确认事项
 
@@ -55,10 +59,12 @@
 - [x] Spec 10A：异步任务可靠性（自动重试、错误分级、幂等保护）
 - [x] Spec 10B：工作区状态刷新优化
 - [x] Spec 10C：工作区布局与交互重整
+- [x] Spec 11A：演示文稿领域模型与备课层生成
+- [x] Spec 11B：页面 DSL 生成与分级校验
+- [x] Spec 11C：Reveal 渲染播放页与工作区入口
 
 ### 待开始
 
-- [ ] Spec 11：互动式演示文稿
 
 ### 暂缓到后续阶段
 
@@ -80,10 +86,12 @@
 10. Spec 10A：补齐异步任务自动重试、错误分级和幂等保护
 11. Spec 10B：优化工作区轮询和局部刷新，降低卡顿
 12. Spec 10C：重整工作区布局层级和移动端折叠交互
-13. Spec 11：互动式演示文稿
-14. Spec 12：TTS 与自动翻页
-15. Spec 13：Anki CSV 导出
-16. Spec 14：课后习题
+13. Spec 11A：演示文稿领域模型与备课层生成
+14. Spec 11B：页面 DSL 生成与分级校验
+15. Spec 11C：Reveal 渲染播放页与工作区入口
+16. Spec 12：TTS 与自动翻页
+17. Spec 13：Anki CSV 导出
+18. Spec 14：课后习题
 
 ## 6. 每轮开发完成后必须更新的内容
 
@@ -492,6 +500,107 @@
   - 或先补充方案三的前置技术设计（focus mode + drawer 交互）
 - 建议提交信息：
   - `feat: redesign workspace sidebar with tabbed interaction layout`
+
+### Spec 11A 交付记录
+
+- 完成内容：
+  - 新增 `presentations` 领域模型与 Alembic 迁移，满足“每资产最多一份”约束
+  - 新增 lesson_plan schema，覆盖五阶段主线、页级目标、证据锚点与固定 script 占位
+  - 新增 `slide_lesson_plan_service`：基于 `parsed_json + mindmap/story graph` 生成 lesson_plan
+  - 新增 lesson_plan 任务编排与状态查询：
+    - `POST /api/assets/{assetId}/slides/lesson-plan/rebuild`
+    - `GET /api/assets/{assetId}/slides/lesson-plan`
+  - 新增最小测试，覆盖五阶段完整性、锚点存在、状态流转守卫
+- 主要新增或修改文件：
+  - `backend/alembic/versions/20260401_0008_create_presentations.py`
+  - `backend/app/models/presentation.py`
+  - `backend/app/models/asset.py`
+  - `backend/app/schemas/slide_lesson_plan.py`
+  - `backend/app/services/slide_lesson_plan_service.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/tests/test_slide_lesson_plan_service.py`
+  - `docs/specs/spec-11a-slides-domain-and-lesson-plan.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_lesson_plan_service.py tests/test_mindmap_story_graph.py tests/test_task_reliability_service.py -v` 已通过（13 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+- 当前已知缺口：
+  - lesson_plan 的 `script` 仍为固定占位文本，未接入更高质量讲稿生成
+  - 当前未产出 slides DSL 与渲染 payload，需在 Spec 11B/11C 接续
+  - `active_run_token` 的并发防旧任务覆盖策略已落地，但尚未补充独立并发回归测试
+- 下一轮建议：
+  - 进入 `Spec 11B：页面 DSL 生成与分级校验`
+  - 复用当前 lesson_plan 输出，增加 must-pass 与 quality-score 双层校验
+- 建议提交信息：
+  - `feat: add presentations model and lesson plan generation pipeline for spec 11a`
+
+### Spec 11B 交付记录
+
+- 完成内容：
+  - 新增 slides DSL schema（模板、区块、动画、引用）与质量报告结构
+  - 新增 DSL 生成器：基于 lesson_plan 产出页级 `slides_dsl`
+  - 新增 must-pass 校验器：可定位到具体页与字段
+  - 新增 quality-score 评估器：覆盖密度、重复、引用覆盖、讲解性
+  - 新增页级局部修复器：仅修复低分页，不重建整稿
+  - 新增 DSL 持久化字段与迁移（`slides_dsl/dsl_quality_report/dsl_fix_logs`）
+  - 新增 DSL pipeline 任务并串联到 lesson_plan 任务成功后自动触发
+- 主要新增或修改文件：
+  - `backend/alembic/versions/20260401_0009_add_slides_dsl_fields_to_presentations.py`
+  - `backend/app/schemas/slide_dsl.py`
+  - `backend/app/services/slide_dsl_service.py`
+  - `backend/app/services/slide_quality_service.py`
+  - `backend/app/services/slide_fix_service.py`
+  - `backend/app/models/presentation.py`
+  - `backend/app/services/slide_lesson_plan_service.py`
+  - `backend/app/services/__init__.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/tests/test_slide_dsl_quality_flow.py`
+  - `docs/specs/spec-11b-slides-dsl-and-quality-gates.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_mindmap_story_graph.py tests/test_task_reliability_service.py -v` 已通过（16 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+- 当前已知缺口：
+  - 质量评分阈值目前为静态规则，尚未做配置化和线上调优
+  - must-pass 未单独暴露查询接口，当前通过持久化报告供后续 11C/运维使用
+  - 局部修复当前为规则修复，未接入模型驱动的更细粒度重写
+- 下一轮建议：
+  - 进入 `Spec 11C：Reveal 渲染播放页与工作区入口`
+  - 复用 `slides_dsl + dsl_quality_report` 直接构建 render payload 与播放入口
+- 建议提交信息：
+  - `feat: add slides dsl generation quality gates and page-level fix pipeline for spec 11b`
+
+### Spec 11C 交付记录
+
+- 完成内容：
+  - 新增播放页路由与页面骨架，接入 Reveal.js 手动翻页
+  - 实现 DSL -> Reveal section 映射，页面可按 stage 模板展示
+  - 新增页级讲稿侧栏，跟随当前页展示 script 与引用
+  - 新增引用回跳：从播放页点击 citation 回到工作区定位（page/block_id）
+  - 工作区新增演示入口按钮与 slides 状态展示
+  - 后端新增 slides 查询接口，统一返回 `slides_dsl + 质量报告 + 修复日志`
+- 主要新增或修改文件：
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+  - `frontend/src/router/routes.ts`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/src/api/assets.ts`
+  - `backend/app/schemas/slide_dsl.py`
+  - `backend/app/services/slide_dsl_service.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/app/services/__init__.py`
+  - `docs/specs/spec-11c-reveal-render-and-workspace-entry.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_mindmap_story_graph.py tests/test_task_reliability_service.py -v` 已通过（16 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - 播放页当前通过 CDN 动态加载 Reveal.js，离线环境需补本地静态资源方案
+  - 尚未增加播放页自动化 UI 测试（目前以 build 和手动交互路径为主）
+  - 播放页样式为首版统一风格，后续可继续收敛模板视觉一致性
+- 下一轮建议：
+  - 进入 `Spec 12：TTS 与自动翻页`
+  - 先补播放页稳定性增强：Reveal 资源降级策略与播放页交互 E2E 测试
+- 建议提交信息：
+  - `feat: add reveal slides player and workspace entry flow for spec 11c`
 
 ## 7. 相关文档
 

@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     dashscope_embedding_model_name: str = "text-embedding-v4"
     dashscope_embedding_dimension: int = 1024
     dashscope_embedding_batch_size: int = 8
+    slides_generation_default_strategy: str = "template"
+    slides_llm_enabled: bool = False
+    slides_shadow_eval_enabled: bool = True
+    slides_processing_stale_timeout_sec: int = 300
     kb_chunk_target_chars: int = 1200
     kb_chunk_max_chars: int = 1600
     local_dev_user_id: str = "local-dev-user"

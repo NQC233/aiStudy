@@ -19,6 +19,7 @@ from app.models import (
     mindmap,
     mindmap_node,
     note,
+    presentation,
     user,
 )  # noqa: F401
 
