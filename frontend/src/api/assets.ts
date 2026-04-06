@@ -60,6 +60,11 @@ export interface AssetParseStatusResponse {
     markdown_storage_key: string | null;
     json_storage_key: string | null;
     raw_response_storage_key: string | null;
+    error_code: string | null;
+    retryable: boolean | null;
+    attempt: number | null;
+    max_retries: number | null;
+    next_retry_eta: string | null;
     task: {
       task_id: string | null;
       data_id: string | null;
@@ -98,6 +103,8 @@ export interface MindmapNodeItem {
   section_path: string[];
   block_ids: string[];
   selector_payload: Record<string, unknown>;
+  node_type: string;
+  stage: string | null;
 }
 
 export interface MindmapSnapshot {
@@ -329,9 +336,106 @@ export interface ChatSessionMessageResponse {
   citations: ChatCitationItem[];
 }
 
+export interface SlideDslCitation {
+  page_no: number;
+  block_ids: string[];
+  quote: string;
+}
+
+export interface SlideDslBlock {
+  block_type: string;
+  content: string;
+}
+
+export interface SlideDslPage {
+  slide_key: string;
+  stage: string;
+  template_type: string;
+  animation_preset: string;
+  blocks: SlideDslBlock[];
+  citations: SlideDslCitation[];
+}
+
+export interface SlidesDslPayload {
+  asset_id: string;
+  version: number;
+  generated_at: string;
+  pages: SlideDslPage[];
+}
+
+export interface SlideMustPassIssue {
+  page_index: number;
+  field: string;
+  code: string;
+  message: string;
+}
+
+export interface SlideMustPassReport {
+  passed: boolean;
+  issues: SlideMustPassIssue[];
+}
+
+export interface SlidePageQualityScore {
+  page_index: number;
+  slide_key: string;
+  score: number;
+  reasons: string[];
+}
+
+export interface SlideQualityReport {
+  overall_score: number;
+  page_scores: SlidePageQualityScore[];
+  low_quality_pages: number[];
+}
+
+export interface SlideFixLog {
+  page_index: number;
+  slide_key: string;
+  before_score: number;
+  after_score: number;
+  reason: string;
+}
+
+export interface SlideGenerationMeta {
+  requested_strategy: 'template' | 'llm';
+  applied_strategy: 'template' | 'llm';
+  fallback_used: boolean;
+  fallback_reason: string | null;
+}
+
+export interface SlideShadowReport {
+  enabled: boolean;
+  target_strategy: 'llm';
+  status: 'skipped' | 'completed' | 'failed';
+  skip_reason: string | null;
+  error_message: string | null;
+  candidate_overall_score: number | null;
+  baseline_overall_score: number | null;
+  score_delta: number | null;
+}
+
+export interface AssetSlidesResponse {
+  asset_id: string;
+  slides_status: string;
+  slides_dsl: SlidesDslPayload | null;
+  must_pass_report: SlideMustPassReport | null;
+  quality_report: SlideQualityReport | null;
+  fix_logs: SlideFixLog[];
+  generation_meta: SlideGenerationMeta;
+  shadow_report: SlideShadowReport;
+}
+
+export interface AssetLessonPlanRebuildResponse {
+  asset_id: string;
+  slides_status: string;
+  message: string;
+  strategy: 'template' | 'llm';
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 180000;
+const PARSED_JSON_REQUEST_TIMEOUT_MS = 30000;
 
 async function requestWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
@@ -460,7 +564,26 @@ export function fetchAssetParseStatus(assetId: string): Promise<AssetParseStatus
 
 
 export function fetchAssetParsedDocument(assetId: string): Promise<AssetParsedDocumentResponse> {
-  return requestJson<AssetParsedDocumentResponse>(`/api/assets/${assetId}/parsed-json`);
+  return (async () => {
+    const path = `/api/assets/${assetId}/parsed-json`;
+    const attemptFetch = async (timeoutMs: number): Promise<AssetParsedDocumentResponse> => {
+      const response = await requestWithTimeout(`${API_BASE_URL}${path}`, undefined, timeoutMs);
+      if (!response.ok) {
+        throw new Error(await parseErrorMessage(response, `请求失败：${response.status}`));
+      }
+      return response.json() as Promise<AssetParsedDocumentResponse>;
+    };
+
+    try {
+      return await attemptFetch(PARSED_JSON_REQUEST_TIMEOUT_MS);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (!message.includes('请求超时')) {
+        throw error;
+      }
+      return attemptFetch(PARSED_JSON_REQUEST_TIMEOUT_MS + 15000);
+    }
+  })();
 }
 
 
@@ -568,4 +691,27 @@ export function sendChatSessionMessage(
   payload: ChatSessionMessageRequest,
 ): Promise<ChatSessionMessageResponse> {
   return postJson<ChatSessionMessageResponse>(`/api/chat/sessions/${sessionId}/messages`, payload);
+}
+
+export function fetchAssetSlides(assetId: string): Promise<AssetSlidesResponse> {
+  return requestJson<AssetSlidesResponse>(`/api/assets/${assetId}/slides`);
+}
+
+export async function rebuildAssetSlides(
+  assetId: string,
+  strategy: 'template' | 'llm' = 'template',
+): Promise<AssetLessonPlanRebuildResponse> {
+  const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/slides/lesson-plan/rebuild`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ strategy }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, `重建演示内容失败：${response.status}`));
+  }
+
+  return response.json() as Promise<AssetLessonPlanRebuildResponse>;
 }

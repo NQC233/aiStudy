@@ -9,6 +9,7 @@ from app.models.document_parse import DocumentParse
 from app.models.mindmap import Mindmap
 from app.models.mindmap_node import MindmapNode
 from app.models.note import Note
+from app.models.presentation import Presentation
 from app.models.user import User
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "Mindmap",
     "MindmapNode",
     "Note",
+    "Presentation",
     "User",
 ]

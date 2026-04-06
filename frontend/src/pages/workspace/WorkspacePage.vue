@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { RouterLink, useRoute } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 
 import {
   createAssetNote,
@@ -16,6 +16,7 @@ import {
   fetchAssetPdfMeta,
   getAssetPdfUrl,
   previewAnchor,
+  rebuildAssetSlides,
   rebuildAssetMindmap,
   retryAssetParse,
   sendChatSessionMessage,
@@ -41,6 +42,7 @@ import { renderMarkdownToSafeHtml } from '@/utils/markdown';
 import { normalizeBlockDisplayText } from '@/utils/text';
 
 const route = useRoute();
+const router = useRouter();
 const assetId = computed(() => route.params.assetId as string);
 
 const asset = ref<AssetDetail | null>(null);
@@ -48,12 +50,16 @@ const parseStatus = ref<AssetParseStatusResponse | null>(null);
 const parsedDocumentResponse = ref<AssetParsedDocumentResponse | null>(null);
 const pdfMeta = ref<AssetPdfDescriptor | null>(null);
 const mindmapData = ref<AssetMindmapResponse | null>(null);
-const loading = ref(true);
+const loading = ref(false);
 const errorMessage = ref('');
 const resourceWarning = ref('');
 const mindmapError = ref('');
+const slidesActionMessage = ref('');
+const slidesActionError = ref('');
+const slidesStrategy = ref<'template' | 'llm'>('template');
 const retrying = ref(false);
 const rebuildingMindmap = ref(false);
+const rebuildingSlides = ref(false);
 const anchorError = ref('');
 const anchorPreview = ref<AnchorPreviewResponse | null>(null);
 const selectedTextSnippet = ref('');
@@ -79,7 +85,21 @@ const noteFormTitle = ref('');
 const noteFormContent = ref('');
 const editingNoteId = ref<string | null>(null);
 const selectedMindmapNode = ref<MindmapNodeItem | null>(null);
+const activeRightTab = ref<'qa' | 'notes' | 'mindmap' | 'status'>('qa');
+const lightRefreshing = ref(false);
 let parsePollTimer: number | null = null;
+let pendingLightRefresh = false;
+
+const POLL_INTERVAL_ACTIVE_MS = 4000;
+const SLIDES_PROCESSING_TIMEOUT_MS = 90_000;
+
+type WorkspaceStatusSnapshot = {
+  parseStatus: string;
+  mindmapStatus: string;
+  slidesStatus: string;
+  kbStatus: string;
+  parseId: string | null;
+};
 
 const parsedDocument = computed(() => parsedDocumentResponse.value?.parsed_json ?? null);
 
@@ -118,13 +138,42 @@ const noteFilterValue = computed<NoteAnchorType | undefined>(() =>
 
 const canRenderReader = computed(() => Boolean(asset.value && pdfMeta.value));
 const canAskQuestion = computed(() => (asset.value?.basic_resources.kb_status ?? '') === 'ready');
-const shouldPollWorkspace = computed(() => {
-  const parseInProgress = parseStatus.value ? ['queued', 'processing'].includes(parseStatus.value.parse_status) : false;
-  const mindmapInProgress = (asset.value?.basic_resources.mindmap_status ?? '') === 'processing';
-  return parseInProgress || mindmapInProgress;
+const parseTaskLabel = computed(() => parseStatus.value?.latest_parse?.task.state ?? '未开始');
+const slidesStatus = computed(() => asset.value?.enhanced_resources.slides_status ?? 'not_generated');
+const canOpenSlides = computed(() => slidesStatus.value === 'ready');
+const slidesProcessingSince = ref<number | null>(null);
+const slidesProcessingHint = computed(() => {
+  if (slidesStatus.value !== 'processing') {
+    return '';
+  }
+  if (slidesProcessingSince.value === null) {
+    return '演示内容正在生成中，页面会在当前工作区自动刷新。';
+  }
+  const elapsedMs = Date.now() - slidesProcessingSince.value;
+  if (elapsedMs >= SLIDES_PROCESSING_TIMEOUT_MS) {
+    return '演示内容仍在生成（超过 90 秒）。建议检查 worker 日志，必要时重试“重新生成演示内容”。';
+  }
+  return '演示内容正在生成中，页面会在当前工作区自动刷新。';
+});
+const slidesLocatorHint = computed(() => {
+  const sourceRaw = route.query.source;
+  const source = Array.isArray(sourceRaw) ? sourceRaw[0] : sourceRaw;
+  if (source !== 'slides') {
+    return '';
+  }
+  const parts = [`已从演示文稿跳转到定位页码 P${targetPage.value}`];
+  if (targetBlockId.value) {
+    parts.push(`块 ${targetBlockId.value}`);
+  }
+  return `${parts.join(' / ')}。`;
 });
 
-const parseTaskLabel = computed(() => parseStatus.value?.latest_parse?.task.state ?? '未开始');
+const rightTabs = [
+  { key: 'qa', label: '问答' },
+  { key: 'notes', label: '笔记' },
+  { key: 'mindmap', label: '导图' },
+  { key: 'status', label: '状态' },
+] as const;
 
 const parseProgressLabel = computed(() => {
   const progress = parseStatus.value?.latest_parse?.task.progress;
@@ -159,21 +208,162 @@ function normalizeErrorMessage(error: unknown, fallback: string): string {
 
 function stopParsePolling() {
   if (parsePollTimer !== null) {
-    window.clearInterval(parsePollTimer);
+    window.clearTimeout(parsePollTimer);
     parsePollTimer = null;
+  }
+}
+
+function currentStatusSnapshot(): WorkspaceStatusSnapshot {
+  return {
+    parseStatus: parseStatus.value?.parse_status ?? asset.value?.basic_resources.parse_status ?? 'not_started',
+    mindmapStatus: asset.value?.basic_resources.mindmap_status ?? mindmapData.value?.mindmap_status ?? 'not_started',
+    slidesStatus: asset.value?.enhanced_resources.slides_status ?? 'not_generated',
+    kbStatus: asset.value?.basic_resources.kb_status ?? 'not_started',
+    parseId: parseStatus.value?.latest_parse?.id ?? null,
+  };
+}
+
+function shouldUseActivePolling(snapshot: WorkspaceStatusSnapshot): boolean {
+  return (
+    ['queued', 'processing'].includes(snapshot.parseStatus)
+    || snapshot.mindmapStatus === 'processing'
+    || snapshot.slidesStatus === 'processing'
+  );
+}
+
+function syncMindmapStatus(status: string) {
+  const current = mindmapData.value;
+  if (current) {
+    if (current.mindmap_status !== status) {
+      mindmapData.value = {
+        ...current,
+        mindmap_status: status,
+      };
+    }
+    return;
+  }
+
+  if (asset.value) {
+    mindmapData.value = {
+      asset_id: asset.value.id,
+      mindmap_status: status,
+      mindmap: null,
+    };
+  }
+}
+
+function syncSlidesProcessingClock(status: string) {
+  if (status === 'processing') {
+    if (slidesProcessingSince.value === null) {
+      slidesProcessingSince.value = Date.now();
+    }
+    return;
+  }
+  slidesProcessingSince.value = null;
+}
+
+async function fetchHeavyResources(options?: { fetchParsed?: boolean; fetchPdf?: boolean; fetchMindmap?: boolean }) {
+  const fetchParsed = options?.fetchParsed ?? true;
+  const fetchPdf = options?.fetchPdf ?? true;
+  const fetchMindmap = options?.fetchMindmap ?? true;
+  const tasks: Promise<void>[] = [];
+
+  if (fetchParsed) {
+    tasks.push(
+      fetchAssetParsedDocument(assetId.value)
+        .then((result) => {
+          parsedDocumentResponse.value = result;
+        })
+        .catch(() => {
+          // 轮询场景下保持旧数据，不强制清空
+        }),
+    );
+  }
+
+  if (fetchPdf) {
+    tasks.push(
+      fetchAssetPdfMeta(assetId.value)
+        .then((result) => {
+          pdfMeta.value = result;
+        })
+        .catch(() => {
+          // 保持旧数据
+        }),
+    );
+  }
+
+  if (fetchMindmap) {
+    tasks.push(
+      fetchAssetMindmap(assetId.value)
+        .then((result) => {
+          mindmapData.value = result;
+        })
+        .catch(() => {
+          // 保持旧数据
+        }),
+    );
+  }
+
+  await Promise.all(tasks);
+}
+
+async function refreshWorkspaceLight() {
+  if (pendingLightRefresh || loading.value) {
+    return;
+  }
+
+  pendingLightRefresh = true;
+  lightRefreshing.value = true;
+
+  try {
+    const previous = currentStatusSnapshot();
+    const [assetDetail, latestParseStatus] = await Promise.all([
+      fetchAssetDetail(assetId.value),
+      fetchAssetParseStatus(assetId.value),
+    ]);
+
+    asset.value = assetDetail;
+    parseStatus.value = latestParseStatus;
+    syncMindmapStatus(assetDetail.basic_resources.mindmap_status);
+    syncSlidesProcessingClock(assetDetail.enhanced_resources.slides_status);
+
+    const next = currentStatusSnapshot();
+    const parseBecameReady = previous.parseStatus !== 'ready' && next.parseStatus === 'ready';
+    const parseChanged = previous.parseId !== next.parseId && next.parseStatus === 'ready';
+    const mindmapBecameReady = previous.mindmapStatus !== 'ready' && next.mindmapStatus === 'ready';
+
+    if (parseBecameReady || parseChanged) {
+      await fetchHeavyResources({ fetchParsed: true, fetchPdf: !pdfMeta.value, fetchMindmap: false });
+      const initialPage = parsedDocumentResponse.value?.parsed_json?.pages[0]?.page_no ?? 1;
+      if (!targetBlockId.value) {
+        targetPage.value = initialPage;
+      }
+    }
+
+    if (mindmapBecameReady) {
+      await fetchHeavyResources({ fetchParsed: false, fetchPdf: false, fetchMindmap: true });
+      mindmapError.value = '';
+    }
+  } catch {
+    // 轻量刷新失败不清空当前内容，也不打断阅读流程
+  } finally {
+    pendingLightRefresh = false;
+    lightRefreshing.value = false;
+    syncParsePolling();
   }
 }
 
 function syncParsePolling() {
   stopParsePolling();
 
-  if (!shouldPollWorkspace.value) {
+  const snapshot = currentStatusSnapshot();
+  if (!shouldUseActivePolling(snapshot)) {
     return;
   }
 
-  parsePollTimer = window.setInterval(() => {
-    void loadWorkspace();
-  }, 5000);
+  parsePollTimer = window.setTimeout(() => {
+    void refreshWorkspaceLight();
+  }, POLL_INTERVAL_ACTIVE_MS);
 }
 
 function focusPage(pageNo: number, blockId: string | null = null) {
@@ -181,7 +371,58 @@ function focusPage(pageNo: number, blockId: string | null = null) {
   targetBlockId.value = blockId;
 }
 
+function applyRouteLocatorFromQuery() {
+  const pageRaw = route.query.page;
+  const blockRaw = route.query.blockId;
+  const pageValue = Array.isArray(pageRaw) ? pageRaw[0] : pageRaw;
+  const blockValue = Array.isArray(blockRaw) ? blockRaw[0] : blockRaw;
+  const parsedPage = Number(pageValue);
+
+  if (Number.isFinite(parsedPage) && parsedPage > 0) {
+    targetPage.value = parsedPage;
+  }
+  if (typeof blockValue === 'string') {
+    targetBlockId.value = blockValue.trim() ? blockValue : null;
+  }
+}
+
+async function openSlidesPage() {
+  if (!canOpenSlides.value) {
+    return;
+  }
+  await router.push({
+    name: 'slides-play',
+    params: { assetId: assetId.value },
+  });
+}
+
+async function handleRebuildSlides() {
+  if (rebuildingSlides.value) {
+    return;
+  }
+  rebuildingSlides.value = true;
+  slidesActionError.value = '';
+  slidesActionMessage.value = '';
+
+  try {
+    const response = await rebuildAssetSlides(assetId.value, slidesStrategy.value);
+    slidesActionMessage.value = `${response.message}（策略：${response.strategy}）`;
+    if (response.slides_status === 'processing') {
+      slidesProcessingSince.value = Date.now();
+    }
+    await loadWorkspace();
+  } catch (error) {
+    slidesActionError.value = normalizeErrorMessage(error, '重建演示内容失败。');
+  } finally {
+    rebuildingSlides.value = false;
+  }
+}
+
 async function loadWorkspace() {
+  if (loading.value) {
+    return;
+  }
+
   loading.value = true;
   errorMessage.value = '';
   resourceWarning.value = '';
@@ -196,9 +437,7 @@ async function loadWorkspace() {
 
     asset.value = assetDetail;
     parseStatus.value = latestParseStatus;
-    parsedDocumentResponse.value = null;
-    pdfMeta.value = null;
-    mindmapData.value = null;
+    syncSlidesProcessingClock(assetDetail.enhanced_resources.slides_status);
 
     const [parsedDocumentResult, pdfMetaResult, mindmapResult] = await Promise.allSettled([
       fetchAssetParsedDocument(assetId.value),
@@ -210,18 +449,29 @@ async function loadWorkspace() {
     if (parsedDocumentResult.status === 'fulfilled') {
       parsedDocumentResponse.value = parsedDocumentResult.value;
     } else {
-      warnings.push('解析索引加载失败');
+      parsedDocumentResponse.value = null;
+      if (assetDetail.basic_resources.parse_status === 'ready') {
+        warnings.push('解析索引暂时不可用（可刷新重试）');
+      } else {
+        warnings.push('解析索引加载失败');
+      }
     }
 
     if (pdfMetaResult.status === 'fulfilled') {
       pdfMeta.value = pdfMetaResult.value;
     } else {
+      pdfMeta.value = null;
       warnings.push('PDF 资源加载失败');
     }
 
     if (mindmapResult.status === 'fulfilled') {
       mindmapData.value = mindmapResult.value;
     } else {
+      mindmapData.value = {
+        asset_id: assetDetail.id,
+        mindmap_status: assetDetail.basic_resources.mindmap_status,
+        mindmap: null,
+      };
       mindmapError.value = '导图加载失败';
     }
 
@@ -733,7 +983,15 @@ watch(
   },
 );
 
+watch(
+  () => route.query,
+  () => {
+    applyRouteLocatorFromQuery();
+  },
+);
+
 onMounted(() => {
+  applyRouteLocatorFromQuery();
   void loadWorkspace();
 });
 
@@ -747,7 +1005,7 @@ onUnmounted(() => {
     <section class="workspace-shell">
       <header class="workspace-header">
         <div>
-          <p class="page-kicker">Workspace / Spec 09</p>
+          <p class="page-kicker">Workspace / Spec 10C</p>
           <h1 v-if="asset">{{ asset.title }}</h1>
           <h1 v-else>阅读器工作区</h1>
         </div>
@@ -770,11 +1028,49 @@ onUnmounted(() => {
           <div class="workspace-summary__lead">
             <span class="summary-badge">{{ asset.source_type === 'preset' ? '预设论文' : '用户上传' }}</span>
             <span class="summary-badge summary-badge--status">{{ parseStatus?.parse_status ?? asset.basic_resources.parse_status }}</span>
+            <span class="summary-badge">Slides: {{ slidesStatus }}</span>
           </div>
 
           <p class="workspace-authors">{{ asset.authors.join(' · ') }}</p>
           <p class="workspace-abstract">
             {{ asset.abstract || '当前资产还没有摘要内容，后续会由解析链路补充。' }}
+          </p>
+          <div class="workspace-actions">
+            <label class="workspace-muted">
+              <span>生成策略</span>
+              <select v-model="slidesStrategy" class="workspace-notes-filter">
+                <option value="template">template（稳定）</option>
+                <option value="llm">llm（灰度）</option>
+              </select>
+            </label>
+            <button
+              class="toolbar-button"
+              type="button"
+              :disabled="!canOpenSlides"
+              @click="openSlidesPage"
+            >
+              {{ canOpenSlides ? '进入演示播放页' : '演示内容未就绪' }}
+            </button>
+            <button
+              class="toolbar-button toolbar-button--ghost"
+              type="button"
+              :disabled="rebuildingSlides"
+              @click="handleRebuildSlides"
+            >
+              {{ rebuildingSlides ? '生成中...' : '重新生成演示内容' }}
+            </button>
+          </div>
+          <p v-if="slidesActionMessage" class="workspace-muted">
+            {{ slidesActionMessage }}
+          </p>
+          <p v-if="slidesActionError" class="workspace-parse-error">
+            {{ slidesActionError }}
+          </p>
+          <p v-if="slidesLocatorHint" class="workspace-muted">
+            {{ slidesLocatorHint }}
+          </p>
+          <p v-if="slidesProcessingHint" class="workspace-muted">
+            {{ slidesProcessingHint }}
           </p>
           <p v-if="resourceWarning" class="workspace-parse-error">
             {{ resourceWarning }}。你可以先查看状态并重试解析。
@@ -800,89 +1096,133 @@ onUnmounted(() => {
           </div>
 
           <aside class="workspace-sidebar">
-            <section class="workspace-panel">
+            <section class="workspace-sidebar-tabs" role="tablist" aria-label="工作区侧栏">
+              <button
+                v-for="tab in rightTabs"
+                :key="tab.key"
+                class="workspace-sidebar-tab"
+                :class="{ 'workspace-sidebar-tab--active': activeRightTab === tab.key }"
+                type="button"
+                role="tab"
+                :aria-selected="activeRightTab === tab.key"
+                @click="activeRightTab = tab.key"
+              >
+                {{ tab.label }}
+              </button>
+            </section>
+
+            <section v-show="activeRightTab === 'qa'" class="workspace-panel">
               <header class="workspace-panel__header">
                 <div>
-                  <p class="page-kicker">Outline</p>
-                  <h2>目录导航</h2>
+                  <p class="page-kicker">Tutor</p>
+                  <h2>问答面板</h2>
                 </div>
-                <strong>{{ tocItems.length }} 节</strong>
               </header>
 
-              <div v-if="tocItems.length" class="toc-list">
+              <div class="workspace-chat-toolbar">
                 <button
-                  v-for="item in tocItems"
-                  :key="item.section_id"
-                  class="toc-item"
+                  class="toolbar-button toolbar-button--ghost"
                   type="button"
-                  :style="{ '--toc-indent': String(Math.max(item.level - 1, 0)) }"
-                  @click="focusPage(item.page_start)"
+                  :disabled="creatingSession"
+                  @click="handleCreateSession"
                 >
-                  <span>{{ renderTocTitle(item.title) }}</span>
-                  <strong>P{{ item.page_start }}</strong>
+                  {{ creatingSession ? '创建中...' : '新建会话' }}
+                </button>
+                <select
+                  class="workspace-chat-select"
+                  :value="activeSessionId ?? ''"
+                  @change="handleSessionChange"
+                >
+                  <option value="">请选择会话</option>
+                  <option
+                    v-for="(session, index) in chatSessions"
+                    :key="session.id"
+                    :value="session.id"
+                  >
+                    {{ `#${index + 1} ${session.title}` }}
+                  </option>
+                </select>
+              </div>
+
+              <p v-if="activeSession" class="workspace-chat-session-meta">
+                当前会话：{{ activeSession.title }} · 消息 {{ activeSession.message_count }}
+              </p>
+
+              <p v-if="!canAskQuestion" class="workspace-muted">
+                当前资产知识库未就绪，暂时无法发起问答。
+              </p>
+
+              <div class="workspace-chat-form">
+                <textarea
+                  v-model="chatQuestion"
+                  class="workspace-chat-input"
+                  placeholder="输入你想问的问题，例如：本文方法与 Transformer 的核心差异是什么？"
+                  rows="3"
+                  :disabled="!activeSessionId || !canAskQuestion || chatSubmitting"
+                />
+                <button
+                  class="toolbar-button"
+                  type="button"
+                  :disabled="!activeSessionId || !canAskQuestion || chatSubmitting || !chatQuestion.trim()"
+                  @click="handleAskQuestion"
+                >
+                  {{ chatSubmitting ? '提问中...' : '发送问题' }}
                 </button>
               </div>
-              <p v-else class="workspace-muted">
-                解析结果尚未生成目录结构。
-              </p>
-            </section>
 
-            <section class="workspace-panel">
-              <MindmapPanel
-                :mindmap-data="mindmapData"
-                :loading="false"
-                :error-message="mindmapError"
-                :rebuilding="rebuildingMindmap"
-                @node-click="handleMindmapNodeClick"
-                @rebuild="handleRebuildMindmap"
-              />
-            </section>
-
-            <section class="workspace-panel">
-              <header class="workspace-panel__header">
-                <div>
-                  <p class="page-kicker">Locator</p>
-                  <h2>当前定位</h2>
-                </div>
-              </header>
-
-              <ul class="resource-list">
-                <li>当前页：{{ targetPage }}</li>
-                <li>当前块：{{ targetBlockId ?? '页级定位' }}</li>
-                <li>段落号：{{ currentBlock?.paragraph_no ?? '-' }}</li>
-                <li>页内块数：{{ currentPageBlocks.length }}</li>
-              </ul>
-
-              <article v-if="currentBlock" class="workspace-block-preview">
-                <p class="page-kicker">Block Preview</p>
-                <strong>{{ currentBlock.block_id }}</strong>
-                <div class="workspace-block-preview__content" v-html="currentBlockPreviewHtml()" />
-              </article>
-            </section>
-
-            <section class="workspace-panel">
-              <header class="workspace-panel__header">
-                <div>
-                  <p class="page-kicker">Anchor</p>
-                  <h2>锚点预览</h2>
-                </div>
-              </header>
-
-              <p v-if="selectedTextSnippet" class="workspace-selection-snippet">
-                {{ selectedTextSnippet }}
-              </p>
-              <p v-else class="workspace-muted">
-                在左侧当前页文本块中选中文本后，这里会生成统一锚点对象。
+              <p v-if="chatError" class="workspace-parse-error">
+                {{ chatError }}
               </p>
 
-              <p v-if="anchorError" class="workspace-parse-error">
-                {{ anchorError }}
-              </p>
+              <div class="workspace-chat-thread">
+                <p v-if="chatLoading" class="workspace-muted">
+                  正在加载会话消息...
+                </p>
+                <p v-else-if="activeSessionId && sessionMessages.length === 0" class="workspace-muted">
+                  当前会话还没有消息，输入问题后将生成回答和引用。
+                </p>
+                <p v-else-if="!activeSessionId" class="workspace-muted">
+                  请先创建或选择一个会话。
+                </p>
 
-              <pre v-if="anchorPreview" class="workspace-json-preview">{{ JSON.stringify(anchorPreview, null, 2) }}</pre>
+                <article
+                  v-for="message in sessionMessages"
+                  :key="message.id"
+                  class="workspace-chat-message"
+                  :class="{ 'workspace-chat-message--assistant': message.role === 'assistant' }"
+                >
+                  <header class="workspace-chat-message__header">
+                    <strong>{{ formatMessageRole(message.role) }}</strong>
+                    <span>{{ formatMessageTime(message.created_at) }}</span>
+                  </header>
+                  <p class="workspace-chat-message__content">{{ message.content }}</p>
+
+                  <ul
+                    v-if="message.role === 'assistant' && message.citations.length"
+                    class="workspace-citation-list"
+                  >
+                    <li
+                      v-for="citation in message.citations"
+                      :key="citation.citation_id"
+                    >
+                      <button
+                        class="workspace-citation-item"
+                        type="button"
+                        @click="jumpToCitation(citation)"
+                      >
+                        <span class="workspace-citation-item__title">{{ formatCitationSection(citation.section_path) }}</span>
+                        <span class="workspace-citation-item__meta">
+                          {{ formatCitationPage(citation) }} · 相似度 {{ citation.score.toFixed(2) }}
+                        </span>
+                        <p>{{ citation.quote_text }}</p>
+                      </button>
+                    </li>
+                  </ul>
+                </article>
+              </div>
             </section>
 
-            <section class="workspace-panel">
+            <section v-show="activeRightTab === 'notes'" class="workspace-panel">
               <header class="workspace-panel__header">
                 <div>
                   <p class="page-kicker">Notes</p>
@@ -995,118 +1335,83 @@ onUnmounted(() => {
               </div>
             </section>
 
-            <section class="workspace-panel">
+            <section v-show="activeRightTab === 'mindmap'" class="workspace-panel">
+              <MindmapPanel
+                :mindmap-data="mindmapData"
+                :loading="false"
+                :error-message="mindmapError"
+                :rebuilding="rebuildingMindmap"
+                @node-click="handleMindmapNodeClick"
+                @rebuild="handleRebuildMindmap"
+              />
+            </section>
+
+            <section v-show="activeRightTab === 'status'" class="workspace-panel">
               <header class="workspace-panel__header">
                 <div>
-                  <p class="page-kicker">Tutor</p>
-                  <h2>问答面板</h2>
+                  <p class="page-kicker">Outline</p>
+                  <h2>目录导航</h2>
+                </div>
+                <strong>{{ tocItems.length }} 节</strong>
+              </header>
+
+              <div v-if="tocItems.length" class="toc-list">
+                <button
+                  v-for="item in tocItems"
+                  :key="item.section_id"
+                  class="toc-item"
+                  type="button"
+                  :style="{ '--toc-indent': String(Math.max(item.level - 1, 0)) }"
+                  @click="focusPage(item.page_start)"
+                >
+                  <span>{{ renderTocTitle(item.title) }}</span>
+                  <strong>P{{ item.page_start }}</strong>
+                </button>
+              </div>
+              <p v-else class="workspace-muted">
+                解析结果尚未生成目录结构。
+              </p>
+
+              <header class="workspace-panel__header workspace-panel__header--sub">
+                <div>
+                  <p class="page-kicker">Locator</p>
+                  <h2>当前定位</h2>
                 </div>
               </header>
 
-              <div class="workspace-chat-toolbar">
-                <button
-                  class="toolbar-button toolbar-button--ghost"
-                  type="button"
-                  :disabled="creatingSession"
-                  @click="handleCreateSession"
-                >
-                  {{ creatingSession ? '创建中...' : '新建会话' }}
-                </button>
-                <select
-                  class="workspace-chat-select"
-                  :value="activeSessionId ?? ''"
-                  @change="handleSessionChange"
-                >
-                  <option value="">请选择会话</option>
-                  <option
-                    v-for="(session, index) in chatSessions"
-                    :key="session.id"
-                    :value="session.id"
-                  >
-                    {{ `#${index + 1} ${session.title}` }}
-                  </option>
-                </select>
-              </div>
+              <ul class="resource-list">
+                <li>当前页：{{ targetPage }}</li>
+                <li>当前块：{{ targetBlockId ?? '页级定位' }}</li>
+                <li>段落号：{{ currentBlock?.paragraph_no ?? '-' }}</li>
+                <li>页内块数：{{ currentPageBlocks.length }}</li>
+              </ul>
 
-              <p v-if="activeSession" class="workspace-chat-session-meta">
-                当前会话：{{ activeSession.title }} · 消息 {{ activeSession.message_count }}
+              <article v-if="currentBlock" class="workspace-block-preview">
+                <p class="page-kicker">Block Preview</p>
+                <strong>{{ currentBlock.block_id }}</strong>
+                <div class="workspace-block-preview__content" v-html="currentBlockPreviewHtml()" />
+              </article>
+
+              <header class="workspace-panel__header workspace-panel__header--sub">
+                <div>
+                  <p class="page-kicker">Anchor</p>
+                  <h2>锚点预览</h2>
+                </div>
+              </header>
+
+              <p v-if="selectedTextSnippet" class="workspace-selection-snippet">
+                {{ selectedTextSnippet }}
+              </p>
+              <p v-else class="workspace-muted">
+                在左侧当前页文本块中选中文本后，这里会生成统一锚点对象。
               </p>
 
-              <p v-if="!canAskQuestion" class="workspace-muted">
-                当前资产知识库未就绪，暂时无法发起问答。
+              <p v-if="anchorError" class="workspace-parse-error">
+                {{ anchorError }}
               </p>
 
-              <div class="workspace-chat-form">
-                <textarea
-                  v-model="chatQuestion"
-                  class="workspace-chat-input"
-                  placeholder="输入你想问的问题，例如：本文方法与 Transformer 的核心差异是什么？"
-                  rows="3"
-                  :disabled="!activeSessionId || !canAskQuestion || chatSubmitting"
-                />
-                <button
-                  class="toolbar-button"
-                  type="button"
-                  :disabled="!activeSessionId || !canAskQuestion || chatSubmitting || !chatQuestion.trim()"
-                  @click="handleAskQuestion"
-                >
-                  {{ chatSubmitting ? '提问中...' : '发送问题' }}
-                </button>
-              </div>
+              <pre v-if="anchorPreview" class="workspace-json-preview">{{ JSON.stringify(anchorPreview, null, 2) }}</pre>
 
-              <p v-if="chatError" class="workspace-parse-error">
-                {{ chatError }}
-              </p>
-
-              <div class="workspace-chat-thread">
-                <p v-if="chatLoading" class="workspace-muted">
-                  正在加载会话消息...
-                </p>
-                <p v-else-if="activeSessionId && sessionMessages.length === 0" class="workspace-muted">
-                  当前会话还没有消息，输入问题后将生成回答和引用。
-                </p>
-                <p v-else-if="!activeSessionId" class="workspace-muted">
-                  请先创建或选择一个会话。
-                </p>
-
-                <article
-                  v-for="message in sessionMessages"
-                  :key="message.id"
-                  class="workspace-chat-message"
-                  :class="{ 'workspace-chat-message--assistant': message.role === 'assistant' }"
-                >
-                  <header class="workspace-chat-message__header">
-                    <strong>{{ formatMessageRole(message.role) }}</strong>
-                    <span>{{ formatMessageTime(message.created_at) }}</span>
-                  </header>
-                  <p class="workspace-chat-message__content">{{ message.content }}</p>
-
-                  <ul
-                    v-if="message.role === 'assistant' && message.citations.length"
-                    class="workspace-citation-list"
-                  >
-                    <li
-                      v-for="citation in message.citations"
-                      :key="citation.citation_id"
-                    >
-                      <button
-                        class="workspace-citation-item"
-                        type="button"
-                        @click="jumpToCitation(citation)"
-                      >
-                        <span class="workspace-citation-item__title">{{ formatCitationSection(citation.section_path) }}</span>
-                        <span class="workspace-citation-item__meta">
-                          {{ formatCitationPage(citation) }} · 相似度 {{ citation.score.toFixed(2) }}
-                        </span>
-                        <p>{{ citation.quote_text }}</p>
-                      </button>
-                    </li>
-                  </ul>
-                </article>
-              </div>
-            </section>
-
-            <section class="workspace-panel">
               <header class="workspace-panel__header">
                 <div>
                   <p class="page-kicker">Pipeline</p>
@@ -1121,6 +1426,7 @@ onUnmounted(() => {
                 <li>解析进度：{{ parseProgressLabel }}</li>
                 <li>parsed_json：{{ parsedDocument ? '已就绪' : '未就绪' }}</li>
                 <li>导图状态：{{ mindmapData?.mindmap_status ?? asset.basic_resources.mindmap_status }}</li>
+                <li>状态同步：{{ lightRefreshing ? '同步中' : '空闲' }}</li>
               </ul>
 
               <div class="workspace-actions">

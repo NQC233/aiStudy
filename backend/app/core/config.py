@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     celery_broker_url: str = "redis://redis:6379/0"
     celery_result_backend: str = "redis://redis:6379/0"
+    celery_task_max_retries: int = 3
+    celery_task_retry_backoff_sec: int = 5
+    celery_task_retry_backoff_max_sec: int = 120
+    celery_task_retry_jitter: bool = True
 
     aliyun_oss_endpoint: str | None = None
     aliyun_oss_bucket: str | None = None
@@ -50,6 +54,10 @@ class Settings(BaseSettings):
     dashscope_embedding_model_name: str = "text-embedding-v4"
     dashscope_embedding_dimension: int = 1024
     dashscope_embedding_batch_size: int = 8
+    slides_generation_default_strategy: str = "template"
+    slides_llm_enabled: bool = False
+    slides_shadow_eval_enabled: bool = True
+    slides_processing_stale_timeout_sec: int = 300
     kb_chunk_target_chars: int = 1200
     kb_chunk_max_chars: int = 1600
     local_dev_user_id: str = "local-dev-user"
@@ -67,7 +75,11 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         """将逗号分隔的跨域来源转换为列表。"""
-        return [origin.strip() for origin in self.backend_cors_origins.split(",") if origin.strip()]
+        return [
+            origin.strip()
+            for origin in self.backend_cors_origins.split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache

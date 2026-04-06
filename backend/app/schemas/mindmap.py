@@ -20,6 +20,8 @@ class MindmapNodeItem(BaseModel):
     section_path: list[str] = Field(default_factory=list)
     block_ids: list[str] = Field(default_factory=list)
     selector_payload: dict[str, Any] = Field(default_factory=dict)
+    node_type: str = "outline"
+    stage: str | None = None
 
 
 class MindmapSnapshot(BaseModel):

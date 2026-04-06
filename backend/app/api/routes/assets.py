@@ -1,4 +1,13 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -13,18 +22,32 @@ from app.schemas.document_chunk import (
 )
 from app.schemas.document_parse import AssetParseRetryResponse, AssetParseStatusResponse
 from app.schemas.mindmap import AssetMindmapRebuildResponse, AssetMindmapResponse
-from app.schemas.note import AnchorType, CreateNoteRequest, NoteItemResponse, NoteListResponse
+from app.schemas.note import (
+    AnchorType,
+    CreateNoteRequest,
+    NoteItemResponse,
+    NoteListResponse,
+)
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
+from app.schemas.slide_lesson_plan import (
+    AssetLessonPlanRebuildRequest,
+    AssetLessonPlanRebuildResponse,
+    AssetLessonPlanResponse,
+)
+from app.schemas.slide_dsl import AssetSlidesResponse
 from app.schemas.asset_upload import AssetUploadResponse
 from app.schemas.chat import ChatSessionCreateRequest, ChatSessionItem
 from app.services import (
     create_asset_note,
+    enqueue_asset_lesson_plan_rebuild,
     create_asset_chat_session,
     create_uploaded_asset,
     enqueue_asset_mindmap_rebuild,
     enqueue_asset_chunk_rebuild,
     enqueue_asset_parse_retry,
     get_asset_mindmap,
+    get_asset_lesson_plan,
+    get_asset_slides_snapshot,
     get_asset_parse_status,
     list_asset_notes,
     list_asset_chat_sessions,
@@ -39,7 +62,12 @@ from app.services.asset_reader_service import (
     preview_asset_anchor,
 )
 from app.services.asset_service import get_asset_detail, list_assets
-from app.workers.tasks import enqueue_build_asset_kb, enqueue_generate_asset_mindmap, enqueue_parse_asset
+from app.workers.tasks import (
+    enqueue_build_asset_kb,
+    enqueue_generate_asset_mindmap,
+    enqueue_generate_asset_lesson_plan,
+    enqueue_parse_asset,
+)
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -51,7 +79,9 @@ def list_asset_endpoint(db: Session = Depends(get_db)) -> list[AssetListItem]:
 
 
 @router.get("/{asset_id}", response_model=AssetDetail, summary="获取资产详情")
-def get_asset_detail_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetDetail:
+def get_asset_detail_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetDetail:
     """返回工作区占位页所需的资产详情。"""
     asset = get_asset_detail(db, asset_id)
     if asset is None:
@@ -62,8 +92,14 @@ def get_asset_detail_endpoint(asset_id: str, db: Session = Depends(get_db)) -> A
     return asset
 
 
-@router.get("/{asset_id}/pdf-meta", response_model=AssetPdfDescriptor, summary="获取阅读器 PDF 地址")
-def get_asset_pdf_meta_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetPdfDescriptor:
+@router.get(
+    "/{asset_id}/pdf-meta",
+    response_model=AssetPdfDescriptor,
+    summary="获取阅读器 PDF 地址",
+)
+def get_asset_pdf_meta_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetPdfDescriptor:
     """返回阅读器加载 PDF 所需的元信息。"""
     return get_asset_pdf_descriptor(db, asset_id)
 
@@ -75,20 +111,36 @@ def get_asset_pdf_endpoint(asset_id: str, db: Session = Depends(get_db)) -> Resp
     return Response(content=content, media_type=content_type)
 
 
-@router.get("/{asset_id}/parsed-json", response_model=AssetParsedDocumentResponse, summary="获取 parsed_json")
-def get_asset_parsed_json_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetParsedDocumentResponse:
+@router.get(
+    "/{asset_id}/parsed-json",
+    response_model=AssetParsedDocumentResponse,
+    summary="获取 parsed_json",
+)
+def get_asset_parsed_json_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetParsedDocumentResponse:
     """返回阅读器目录、块级定位和锚点索引所需的 parsed_json。"""
     return get_asset_parsed_document(db, asset_id)
 
 
-@router.get("/{asset_id}/mindmap", response_model=AssetMindmapResponse, summary="获取资产导图")
-def get_asset_mindmap_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetMindmapResponse:
+@router.get(
+    "/{asset_id}/mindmap", response_model=AssetMindmapResponse, summary="获取资产导图"
+)
+def get_asset_mindmap_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetMindmapResponse:
     """返回当前资产可用的导图节点与映射信息。"""
     return get_asset_mindmap(db, asset_id)
 
 
-@router.get("/{asset_id}/status", response_model=AssetParseStatusResponse, summary="获取资产解析状态")
-def get_asset_status_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetParseStatusResponse:
+@router.get(
+    "/{asset_id}/status",
+    response_model=AssetParseStatusResponse,
+    summary="获取资产解析状态",
+)
+def get_asset_status_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetParseStatusResponse:
     """返回当前资产和最近一次解析任务的状态摘要。"""
     parse_status = get_asset_parse_status(db, asset_id)
     if parse_status is None:
@@ -99,8 +151,14 @@ def get_asset_status_endpoint(asset_id: str, db: Session = Depends(get_db)) -> A
     return parse_status
 
 
-@router.get("/{asset_id}/parse", response_model=AssetParseStatusResponse, summary="获取资产解析详情")
-def get_asset_parse_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetParseStatusResponse:
+@router.get(
+    "/{asset_id}/parse",
+    response_model=AssetParseStatusResponse,
+    summary="获取资产解析详情",
+)
+def get_asset_parse_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetParseStatusResponse:
     """首期解析详情直接复用状态结构，后续可单独扩展。"""
     parse_status = get_asset_parse_status(db, asset_id)
     if parse_status is None:
@@ -111,20 +169,77 @@ def get_asset_parse_endpoint(asset_id: str, db: Session = Depends(get_db)) -> As
     return parse_status
 
 
-@router.post("/{asset_id}/parse/retry", response_model=AssetParseRetryResponse, summary="重试资产解析")
-def retry_asset_parse_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetParseRetryResponse:
+@router.get(
+    "/{asset_id}/slides/lesson-plan",
+    response_model=AssetLessonPlanResponse,
+    summary="获取资产 lesson_plan 状态与摘要",
+)
+def get_asset_lesson_plan_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetLessonPlanResponse:
+    """返回 lesson_plan 生成状态、快照与阶段摘要。"""
+    return get_asset_lesson_plan(db, asset_id)
+
+
+@router.get(
+    "/{asset_id}/slides",
+    response_model=AssetSlidesResponse,
+    summary="获取资产 slides DSL 与质量报告",
+)
+def get_asset_slides_endpoint(
+    asset_id: str,
+    db: Session = Depends(get_db),
+) -> AssetSlidesResponse:
+    """返回用于播放页渲染的 slides_dsl 与质量报告。"""
+    return get_asset_slides_snapshot(db, asset_id)
+
+
+@router.post(
+    "/{asset_id}/slides/lesson-plan/rebuild",
+    response_model=AssetLessonPlanRebuildResponse,
+    summary="重建资产 lesson_plan",
+)
+def rebuild_asset_lesson_plan_endpoint(
+    asset_id: str,
+    payload: AssetLessonPlanRebuildRequest,
+    db: Session = Depends(get_db),
+) -> AssetLessonPlanRebuildResponse:
+    """将当前资产推进到 lesson_plan 生成队列。"""
+    asset, should_enqueue, message = enqueue_asset_lesson_plan_rebuild(db, asset_id)
+    if should_enqueue:
+        enqueue_generate_asset_lesson_plan.delay(asset.id, strategy=payload.strategy)
+    return AssetLessonPlanRebuildResponse(
+        asset_id=asset.id,
+        slides_status=asset.slides_status,
+        message=message,
+        strategy=payload.strategy,
+    )
+
+
+@router.post(
+    "/{asset_id}/parse/retry",
+    response_model=AssetParseRetryResponse,
+    summary="重试资产解析",
+)
+def retry_asset_parse_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetParseRetryResponse:
     """将失败或未开始的资产重新推进到解析队列。"""
-    asset, should_enqueue = enqueue_asset_parse_retry(db, asset_id)
+    asset, should_enqueue, message = enqueue_asset_parse_retry(db, asset_id)
     if should_enqueue:
         enqueue_parse_asset.delay(asset.id)
     return AssetParseRetryResponse(
         asset_id=asset.id,
         parse_status=asset.parse_status,
-        message="已重新加入解析队列。" if should_enqueue else "当前资产已在解析队列中。",
+        message=message,
     )
 
 
-@router.get("/{asset_id}/chunks", response_model=AssetChunkListResponse, summary="获取资产 chunk 列表")
+@router.get(
+    "/{asset_id}/chunks",
+    response_model=AssetChunkListResponse,
+    summary="获取资产 chunk 列表",
+)
 def list_asset_chunks_endpoint(
     asset_id: str,
     limit: int = 100,
@@ -134,8 +249,14 @@ def list_asset_chunks_endpoint(
     return list_asset_chunks(db, asset_id=asset_id, limit=limit)
 
 
-@router.post("/{asset_id}/chunks/rebuild", response_model=AssetChunkRebuildResponse, summary="重建资产知识库")
-def rebuild_asset_chunks_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetChunkRebuildResponse:
+@router.post(
+    "/{asset_id}/chunks/rebuild",
+    response_model=AssetChunkRebuildResponse,
+    summary="重建资产知识库",
+)
+def rebuild_asset_chunks_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetChunkRebuildResponse:
     """将当前资产推进到知识库重建队列。"""
     asset, should_enqueue = enqueue_asset_chunk_rebuild(db, asset_id)
     if should_enqueue:
@@ -143,7 +264,9 @@ def rebuild_asset_chunks_endpoint(asset_id: str, db: Session = Depends(get_db)) 
     return AssetChunkRebuildResponse(
         asset_id=asset.id,
         kb_status=asset.kb_status,
-        message="已加入知识库重建队列。" if should_enqueue else "当前资产知识库正在构建中。",
+        message="已加入知识库重建队列。"
+        if should_enqueue
+        else "当前资产知识库正在构建中。",
     )
 
 
@@ -152,7 +275,9 @@ def rebuild_asset_chunks_endpoint(asset_id: str, db: Session = Depends(get_db)) 
     response_model=AssetMindmapRebuildResponse,
     summary="重建资产导图",
 )
-def rebuild_asset_mindmap_endpoint(asset_id: str, db: Session = Depends(get_db)) -> AssetMindmapRebuildResponse:
+def rebuild_asset_mindmap_endpoint(
+    asset_id: str, db: Session = Depends(get_db)
+) -> AssetMindmapRebuildResponse:
     """将当前资产推进到导图重建队列。"""
     asset, should_enqueue = enqueue_asset_mindmap_rebuild(db, asset_id)
     if should_enqueue:
@@ -160,7 +285,9 @@ def rebuild_asset_mindmap_endpoint(asset_id: str, db: Session = Depends(get_db))
     return AssetMindmapRebuildResponse(
         asset_id=asset.id,
         mindmap_status=asset.mindmap_status,
-        message="已加入导图生成队列。" if should_enqueue else "当前资产导图正在生成中。",
+        message="已加入导图生成队列。"
+        if should_enqueue
+        else "当前资产导图正在生成中。",
     )
 
 
@@ -175,7 +302,9 @@ def search_asset_retrieval_endpoint(
     db: Session = Depends(get_db),
 ) -> AssetRetrievalSearchResponse:
     """返回单资产范围内可直接回跳的检索结果。"""
-    return search_asset_chunks(db, asset_id=asset_id, query=payload.query, top_k=payload.top_k)
+    return search_asset_chunks(
+        db, asset_id=asset_id, query=payload.query, top_k=payload.top_k
+    )
 
 
 @router.post(
@@ -262,7 +391,9 @@ def list_asset_notes_endpoint(
     )
 
 
-@router.post("/upload", response_model=AssetUploadResponse, summary="上传 PDF 并创建学习资产")
+@router.post(
+    "/upload", response_model=AssetUploadResponse, summary="上传 PDF 并创建学习资产"
+)
 async def upload_asset_endpoint(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
@@ -272,7 +403,9 @@ async def upload_asset_endpoint(
     content = await file.read()
     content_type = file.content_type or "application/pdf"
 
-    validate_pdf_upload(filename=file.filename, content_type=content_type, content=content)
+    validate_pdf_upload(
+        filename=file.filename, content_type=content_type, content=content
+    )
     return create_uploaded_asset(
         db=db,
         user_id=settings.local_dev_user_id,

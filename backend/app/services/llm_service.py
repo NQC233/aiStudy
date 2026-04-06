@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 from collections.abc import Sequence
 from typing import Any
@@ -40,7 +41,9 @@ def _clip_text(text: str, limit: int = 1200) -> str:
 def _build_context_lines(retrieval_hits: Sequence[RetrievalSearchHit]) -> str:
     lines: list[str] = []
     for index, hit in enumerate(retrieval_hits, start=1):
-        section_label = " / ".join(hit.section_path) if hit.section_path else "未标注章节"
+        section_label = (
+            " / ".join(hit.section_path) if hit.section_path else "未标注章节"
+        )
         page_label = "-"
         if hit.page_start is not None and hit.page_end is not None:
             page_label = f"{hit.page_start}-{hit.page_end}"
@@ -112,7 +115,11 @@ def generate_qa_answer(
     )
 
     context_block = _build_context_lines(retrieval_hits)
-    anchor_block = json.dumps(selected_anchor_payload, ensure_ascii=False) if selected_anchor_payload else "无"
+    anchor_block = (
+        json.dumps(selected_anchor_payload, ensure_ascii=False)
+        if selected_anchor_payload
+        else "无"
+    )
     user_prompt = (
         "【用户问题】\n"
         f"{question.strip()}\n\n"
@@ -170,3 +177,132 @@ def generate_qa_answer(
     if not message_content:
         raise LLMRequestError("模型响应缺少可用内容。")
     return message_content
+
+
+def _build_slides_stage_prompt(
+    stage: str,
+    title: str,
+    goal: str,
+    script: str,
+    evidence_quotes: Sequence[str],
+) -> str:
+    evidence_lines = [
+        f"[{index}] {_clip_text(quote, limit=240)}"
+        for index, quote in enumerate(evidence_quotes, start=1)
+        if quote.strip()
+    ]
+    evidence_block = "\n".join(evidence_lines) if evidence_lines else "[1] 无可用证据"
+    return (
+        "你是论文演示文稿编辑器。请基于证据生成单页内容，不得虚构事实。\n"
+        "输出必须是 JSON 对象，仅包含 title/goal/script/evidence 四个字段。\n"
+        "约束：title<=24字，goal<=42字，script<=180字，evidence<=160字。\n"
+        "\n"
+        f"stage={stage}\n"
+        f"原始标题={title}\n"
+        f"原始目标={goal}\n"
+        f"原始讲稿={script}\n"
+        "证据列表：\n"
+        f"{evidence_block}\n"
+    )
+
+
+def _extract_json_object(raw_text: str) -> dict[str, Any]:
+    stripped = raw_text.strip()
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise LLMRequestError("模型返回中缺少 JSON 对象。")
+    snippet = stripped[start : end + 1]
+    try:
+        payload = json.loads(snippet)
+    except json.JSONDecodeError as exc:
+        repaired = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", snippet)
+        try:
+            payload = json.loads(repaired)
+        except json.JSONDecodeError as repaired_exc:
+            raise LLMRequestError("模型返回 JSON 解析失败。") from repaired_exc
+    if not isinstance(payload, dict):
+        raise LLMRequestError("模型返回 JSON 结构非法。")
+    return payload
+
+
+def generate_slides_stage_copy(
+    stage: str,
+    title: str,
+    goal: str,
+    script: str,
+    evidence_quotes: Sequence[str],
+) -> dict[str, str]:
+    """调用 DashScope 生成单页讲稿文案（严格 JSON 输出）。"""
+    api_key, base_url, model_name = _ensure_chat_configuration()
+
+    system_prompt = (
+        "你是严谨的论文讲稿编辑助手。"
+        "必须严格基于证据，不允许添加证据外事实。"
+        "输出仅允许 JSON 对象。"
+    )
+    user_prompt = _build_slides_stage_prompt(
+        stage=stage,
+        title=title,
+        goal=goal,
+        script=script,
+        evidence_quotes=evidence_quotes,
+    )
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }
+
+    request = Request(
+        url=base_url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=settings.dashscope_chat_timeout_sec) as response:
+            raw_body = response.read()
+    except HTTPError as exc:
+        raw_error = exc.read().decode("utf-8", errors="ignore")
+        raise LLMRequestError(f"模型请求失败：HTTP {exc.code} {raw_error}") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise LLMRequestError("模型请求超时，请稍后重试。") from exc
+    except URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            raise LLMRequestError("模型请求超时，请稍后重试。") from exc
+        raise LLMRequestError("模型服务不可达，请检查网络或配置。") from exc
+
+    try:
+        response_json = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LLMRequestError("模型响应不是合法 JSON。") from exc
+
+    message_content = _extract_message_content(response_json)
+    if not message_content:
+        raise LLMRequestError("模型响应缺少可用内容。")
+    data = _extract_json_object(message_content)
+
+    normalized_title = str(data.get("title", title)).strip() or title
+    normalized_goal = str(data.get("goal", goal)).strip() or goal
+    normalized_script = str(data.get("script", script)).strip() or script
+    evidence_default = "；".join([quote for quote in evidence_quotes if quote.strip()])
+    normalized_evidence = (
+        str(data.get("evidence", evidence_default)).strip() or evidence_default
+    )
+
+    return {
+        "title": _clip_text(normalized_title, limit=24),
+        "goal": _clip_text(normalized_goal, limit=42),
+        "script": _clip_text(normalized_script, limit=180),
+        "evidence": _clip_text(normalized_evidence, limit=160),
+    }
