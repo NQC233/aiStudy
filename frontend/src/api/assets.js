@@ -205,3 +205,9 @@ export async function rebuildAssetSlides(assetId, strategy = 'template') {
     }
     return response.json();
 }
+export function ensureAssetSlideTts(assetId, payload) {
+    return postJson(`/api/assets/${assetId}/slides/tts/ensure`, payload);
+}
+export function retryNextAssetSlideTts(assetId, payload) {
+    return postJson(`/api/assets/${assetId}/slides/tts/retry-next`, payload);
+}

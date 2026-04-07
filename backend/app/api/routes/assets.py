@@ -34,7 +34,13 @@ from app.schemas.slide_lesson_plan import (
     AssetLessonPlanRebuildResponse,
     AssetLessonPlanResponse,
 )
-from app.schemas.slide_dsl import AssetSlidesResponse
+from app.schemas.slide_dsl import (
+    AssetSlideTtsEnsureRequest,
+    AssetSlideTtsEnsureResponse,
+    AssetSlideTtsRetryNextRequest,
+    AssetSlideTtsRetryNextResponse,
+    AssetSlidesResponse,
+)
 from app.schemas.asset_upload import AssetUploadResponse
 from app.schemas.chat import ChatSessionCreateRequest, ChatSessionItem
 from app.services import (
@@ -45,6 +51,7 @@ from app.services import (
     enqueue_asset_mindmap_rebuild,
     enqueue_asset_chunk_rebuild,
     enqueue_asset_parse_retry,
+    ensure_asset_slide_tts,
     get_asset_mindmap,
     get_asset_lesson_plan,
     get_asset_slides_snapshot,
@@ -52,6 +59,7 @@ from app.services import (
     list_asset_notes,
     list_asset_chat_sessions,
     list_asset_chunks,
+    retry_next_asset_slide_tts,
     search_asset_chunks,
     validate_pdf_upload,
 )
@@ -66,6 +74,7 @@ from app.workers.tasks import (
     enqueue_build_asset_kb,
     enqueue_generate_asset_mindmap,
     enqueue_generate_asset_lesson_plan,
+    enqueue_generate_asset_slide_tts,
     enqueue_parse_asset,
 )
 
@@ -192,6 +201,49 @@ def get_asset_slides_endpoint(
 ) -> AssetSlidesResponse:
     """返回用于播放页渲染的 slides_dsl 与质量报告。"""
     return get_asset_slides_snapshot(db, asset_id)
+
+
+@router.post(
+    "/{asset_id}/slides/tts/ensure",
+    response_model=AssetSlideTtsEnsureResponse,
+    summary="触发当前页与下一页 TTS 生成",
+)
+def ensure_asset_slide_tts_endpoint(
+    asset_id: str,
+    payload: AssetSlideTtsEnsureRequest,
+    db: Session = Depends(get_db),
+) -> AssetSlideTtsEnsureResponse:
+    """按播放进度触发当前页懒生成，并可预取下一页。"""
+    response = ensure_asset_slide_tts(
+        db,
+        asset_id=asset_id,
+        page_index=payload.page_index,
+        prefetch_next=payload.prefetch_next,
+    )
+    for slide_key in response.enqueued_slide_keys:
+        enqueue_generate_asset_slide_tts.delay(asset_id, slide_key)
+    return response
+
+
+@router.post(
+    "/{asset_id}/slides/tts/retry-next",
+    response_model=AssetSlideTtsRetryNextResponse,
+    summary="重试下一页 TTS 生成",
+)
+def retry_next_asset_slide_tts_endpoint(
+    asset_id: str,
+    payload: AssetSlideTtsRetryNextRequest,
+    db: Session = Depends(get_db),
+) -> AssetSlideTtsRetryNextResponse:
+    """自动播放暂停后，重试下一页失败任务并重新入队。"""
+    response = retry_next_asset_slide_tts(
+        db,
+        asset_id=asset_id,
+        current_page_index=payload.current_page_index,
+    )
+    for slide_key in response.enqueued_slide_keys:
+        enqueue_generate_asset_slide_tts.delay(asset_id, slide_key)
+    return response
 
 
 @router.post(

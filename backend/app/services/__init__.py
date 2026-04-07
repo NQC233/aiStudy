@@ -41,6 +41,11 @@ from app.services.slide_dsl_service import (
     get_asset_slides_snapshot,
     run_asset_slides_dsl_pipeline,
 )
+from app.services.slide_tts_service import (
+    ensure_asset_slide_tts,
+    retry_next_asset_slide_tts,
+    run_asset_slide_tts_pipeline,
+)
 
 __all__ = [
     "create_uploaded_asset",
@@ -62,6 +67,9 @@ __all__ = [
     "run_asset_lesson_plan_pipeline",
     "run_asset_slides_dsl_pipeline",
     "get_asset_slides_snapshot",
+    "ensure_asset_slide_tts",
+    "retry_next_asset_slide_tts",
+    "run_asset_slide_tts_pipeline",
     "run_asset_kb_pipeline",
     "search_asset_chunks",
     "seed_dev_user_and_assets",

@@ -414,15 +414,85 @@ export interface SlideShadowReport {
   score_delta: number | null;
 }
 
+export interface SlideTtsManifestItem {
+  slide_key: string;
+  audio_url: string | null;
+  duration_ms: number | null;
+  status: 'pending' | 'processing' | 'ready' | 'failed';
+  error_message: string | null;
+  retry_meta?: {
+    attempt?: number;
+    max_retries?: number;
+    next_retry_eta?: string;
+    auto_retry_pending?: boolean;
+    error_code?: string;
+  } | null;
+}
+
+export interface SlideTtsManifest {
+  pages: SlideTtsManifestItem[];
+}
+
+export interface SlideCueItem {
+  block_id: string;
+  start_ms: number;
+  end_ms: number;
+  animation: string;
+}
+
+export interface SlidePlaybackPagePlan {
+  slide_key: string;
+  start_ms: number;
+  end_ms: number;
+  duration_ms: number;
+  cues: SlideCueItem[];
+}
+
+export interface SlidePlaybackPlan {
+  total_duration_ms: number;
+  pages: SlidePlaybackPagePlan[];
+}
+
 export interface AssetSlidesResponse {
   asset_id: string;
   slides_status: string;
+  tts_status: 'not_generated' | 'processing' | 'ready' | 'failed' | 'partial';
+  playback_status: 'not_ready' | 'ready';
+  auto_page_supported: boolean;
   slides_dsl: SlidesDslPayload | null;
   must_pass_report: SlideMustPassReport | null;
   quality_report: SlideQualityReport | null;
   fix_logs: SlideFixLog[];
   generation_meta: SlideGenerationMeta;
   shadow_report: SlideShadowReport;
+  tts_manifest: SlideTtsManifest;
+  playback_plan: SlidePlaybackPlan;
+}
+
+export interface AssetSlideTtsEnsureRequest {
+  page_index: number;
+  prefetch_next?: boolean;
+}
+
+export interface AssetSlideTtsEnsureResponse {
+  asset_id: string;
+  page_index: number;
+  enqueued_slide_keys: string[];
+  tts_status: 'not_generated' | 'processing' | 'ready' | 'failed' | 'partial';
+  message: string;
+}
+
+export interface AssetSlideTtsRetryNextRequest {
+  current_page_index: number;
+}
+
+export interface AssetSlideTtsRetryNextResponse {
+  asset_id: string;
+  current_page_index: number;
+  next_slide_key: string | null;
+  enqueued_slide_keys: string[];
+  tts_status: 'not_generated' | 'processing' | 'ready' | 'failed' | 'partial';
+  message: string;
 }
 
 export interface AssetLessonPlanRebuildResponse {
@@ -714,4 +784,18 @@ export async function rebuildAssetSlides(
   }
 
   return response.json() as Promise<AssetLessonPlanRebuildResponse>;
+}
+
+export function ensureAssetSlideTts(
+  assetId: string,
+  payload: AssetSlideTtsEnsureRequest,
+): Promise<AssetSlideTtsEnsureResponse> {
+  return postJson<AssetSlideTtsEnsureResponse>(`/api/assets/${assetId}/slides/tts/ensure`, payload);
+}
+
+export function retryNextAssetSlideTts(
+  assetId: string,
+  payload: AssetSlideTtsRetryNextRequest,
+): Promise<AssetSlideTtsRetryNextResponse> {
+  return postJson<AssetSlideTtsRetryNextResponse>(`/api/assets/${assetId}/slides/tts/retry-next`, payload);
 }

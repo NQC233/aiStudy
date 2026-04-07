@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     dashscope_embedding_model_name: str = "text-embedding-v4"
     dashscope_embedding_dimension: int = 1024
     dashscope_embedding_batch_size: int = 8
+    dashscope_tts_base_url: str | None = None
+    dashscope_tts_model_name: str = "cosyvoice-v3-flash"
+    dashscope_tts_voice: str = "longxiaochun_v3"
+    dashscope_tts_timeout_sec: int = 90
     slides_generation_default_strategy: str = "template"
     slides_llm_enabled: bool = False
     slides_shadow_eval_enabled: bool = True

@@ -30,11 +30,18 @@ def _create_bucket() -> oss2.Bucket:
         raise OSSConfigurationError("未配置阿里云 OSS endpoint。")
     if not settings.aliyun_oss_bucket:
         raise OSSConfigurationError("未配置阿里云 OSS bucket。")
-    if not settings.aliyun_oss_access_key_id or not settings.aliyun_oss_access_key_secret:
+    if (
+        not settings.aliyun_oss_access_key_id
+        or not settings.aliyun_oss_access_key_secret
+    ):
         raise OSSConfigurationError("未配置阿里云 OSS 访问密钥。")
 
-    auth = oss2.Auth(settings.aliyun_oss_access_key_id, settings.aliyun_oss_access_key_secret)
-    return oss2.Bucket(auth, f"https://{settings.aliyun_oss_endpoint}", settings.aliyun_oss_bucket)
+    auth = oss2.Auth(
+        settings.aliyun_oss_access_key_id, settings.aliyun_oss_access_key_secret
+    )
+    return oss2.Bucket(
+        auth, f"https://{settings.aliyun_oss_endpoint}", settings.aliyun_oss_bucket
+    )
 
 
 def build_asset_pdf_key(user_id: str, asset_id: str, filename: str) -> str:
@@ -45,10 +52,27 @@ def build_asset_pdf_key(user_id: str, asset_id: str, filename: str) -> str:
     return f"{_build_asset_prefix(user_id=user_id, asset_id=asset_id)}/original/{object_name}"
 
 
-def build_parse_artifact_key(user_id: str, asset_id: str, parse_id: str, relative_path: str) -> str:
+def build_parse_artifact_key(
+    user_id: str, asset_id: str, parse_id: str, relative_path: str
+) -> str:
     """生成解析产物在 OSS 中的对象路径。"""
     normalized_path = relative_path.strip("/").replace("\\", "/")
     return f"{_build_asset_prefix(user_id=user_id, asset_id=asset_id)}/parses/{parse_id}/{normalized_path}"
+
+
+def build_slide_tts_audio_key(
+    user_id: str,
+    asset_id: str,
+    presentation_version: int,
+    slide_key: str,
+) -> str:
+    safe_slide_key = (
+        slide_key.strip().replace(":", "-").replace("/", "-").replace(" ", "-")
+    )
+    return (
+        f"{_build_asset_prefix(user_id=user_id, asset_id=asset_id)}"
+        f"/slides/v{presentation_version}/tts/{safe_slide_key}.mp3"
+    )
 
 
 def build_public_url(storage_key: str) -> str:
@@ -59,7 +83,9 @@ def build_public_url(storage_key: str) -> str:
         raise OSSConfigurationError("OSS bucket 或 endpoint 缺失，无法生成公开地址。")
 
     if settings.aliyun_oss_mineru_use_origin_url:
-        return f"https://{settings.aliyun_oss_bucket}.{settings.aliyun_oss_endpoint}/{key}"
+        return (
+            f"https://{settings.aliyun_oss_bucket}.{settings.aliyun_oss_endpoint}/{key}"
+        )
 
     if settings.aliyun_oss_public_base_url:
         return f"{settings.aliyun_oss_public_base_url.rstrip('/')}/{key}"
@@ -67,15 +93,25 @@ def build_public_url(storage_key: str) -> str:
     return f"https://{settings.aliyun_oss_bucket}.{settings.aliyun_oss_endpoint}/{key}"
 
 
-def upload_pdf_bytes(user_id: str, asset_id: str, filename: str, content: bytes, content_type: str) -> OSSUploadResult:
+def upload_pdf_bytes(
+    user_id: str, asset_id: str, filename: str, content: bytes, content_type: str
+) -> OSSUploadResult:
     """将上传的 PDF 内容写入 OSS，并返回对象路径和外部访问地址。"""
-    storage_key = build_asset_pdf_key(user_id=user_id, asset_id=asset_id, filename=filename)
-    return upload_bytes(storage_key=storage_key, content=content, content_type=content_type)
+    storage_key = build_asset_pdf_key(
+        user_id=user_id, asset_id=asset_id, filename=filename
+    )
+    return upload_bytes(
+        storage_key=storage_key, content=content, content_type=content_type
+    )
 
 
-def upload_bytes(storage_key: str, content: bytes, content_type: str) -> OSSUploadResult:
+def upload_bytes(
+    storage_key: str, content: bytes, content_type: str
+) -> OSSUploadResult:
     """将任意字节内容写入 OSS，并返回对象路径和外部访问地址。"""
     bucket = _create_bucket()
     headers = {"Content-Type": content_type}
     bucket.put_object(storage_key, content, headers=headers)
-    return OSSUploadResult(storage_key=storage_key, public_url=build_public_url(storage_key))
+    return OSSUploadResult(
+        storage_key=storage_key, public_url=build_public_url(storage_key)
+    )
