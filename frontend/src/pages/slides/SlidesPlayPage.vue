@@ -3,13 +3,16 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 
 import {
+  ensureAssetSlideTts,
   fetchAssetDetail,
   fetchAssetSlides,
   rebuildAssetSlides,
+  retryNextAssetSlideTts,
   type AssetDetail,
   type AssetSlidesResponse,
   type SlideDslPage,
 } from '@/api/assets';
+import { useSlidesPlaybackTimeline } from '@/composables/useSlidesPlaybackTimeline';
 
 const route = useRoute();
 const router = useRouter();
@@ -18,19 +21,86 @@ const assetId = computed(() => String(route.params.assetId ?? ''));
 const loading = ref(false);
 const errorMessage = ref('');
 const recoveringSlides = ref(false);
+const playbackMessage = ref('');
+const playbackBusy = ref(false);
+const failedNextPageIndex = ref<number | null>(null);
+const waitingNextPageIndex = ref<number | null>(null);
+const waitingResumePlayback = ref(false);
+const waitingPollTimer = ref<number | null>(null);
 const asset = ref<AssetDetail | null>(null);
 const slidesResponse = ref<AssetSlidesResponse | null>(null);
 const currentSlideIndex = ref(0);
+const audioEl = ref<HTMLAudioElement | null>(null);
 
 const pages = computed(() => slidesResponse.value?.slides_dsl?.pages ?? []);
 const currentPage = computed(() => pages.value[currentSlideIndex.value] ?? null);
 const qualityScore = computed(() => slidesResponse.value?.quality_report?.overall_score ?? null);
 const generationMeta = computed(() => slidesResponse.value?.generation_meta ?? null);
 const shadowReport = computed(() => slidesResponse.value?.shadow_report ?? null);
+const playbackPlan = computed(() => slidesResponse.value?.playback_plan ?? null);
+const ttsManifestItems = computed(() => slidesResponse.value?.tts_manifest?.pages ?? []);
 const effectiveSlidesStatus = computed(() => slidesResponse.value?.slides_status ?? asset.value?.enhanced_resources.slides_status ?? 'unknown');
 const isSlidesReady = computed(() => effectiveSlidesStatus.value === 'ready');
 const canGoPrev = computed(() => currentSlideIndex.value > 0);
 const canGoNext = computed(() => currentSlideIndex.value < pages.value.length - 1);
+
+const {
+  isPlaying,
+  autoPageEnabled,
+  totalDurationMs,
+  displayedGlobalMs,
+  currentPageElapsedMs,
+  activeCueBlockId,
+  setPlaying,
+  setAutoPageEnabled,
+  syncToSlideStart,
+  setCurrentPageElapsedMs,
+  beginPreview,
+  endPreviewAndGetSeekTarget,
+  seekGlobalMs,
+} = useSlidesPlaybackTimeline({
+  pages,
+  currentSlideIndex,
+  playbackPlan,
+});
+
+const currentManifestItem = computed(() => {
+  const slideKey = currentPage.value?.slide_key;
+  if (!slideKey) {
+    return null;
+  }
+  return ttsManifestItems.value.find((item) => item.slide_key === slideKey) ?? null;
+});
+
+function formatRetryEta(eta: string | undefined): string {
+  if (!eta) {
+    return '';
+  }
+  const date = new Date(eta);
+  if (Number.isNaN(date.getTime())) {
+    return eta;
+  }
+  return date.toLocaleTimeString('zh-CN', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+const currentTtsRetryHint = computed(() => {
+  const retryMeta = currentManifestItem.value?.retry_meta;
+  if (!retryMeta?.auto_retry_pending) {
+    return '';
+  }
+  const attempt = retryMeta.attempt ?? 0;
+  const maxRetries = retryMeta.max_retries ?? 0;
+  const eta = formatRetryEta(retryMeta.next_retry_eta);
+  if (eta) {
+    return `自动重试中（${attempt}/${maxRetries}），预计 ${eta}`;
+  }
+  return `自动重试中（${attempt}/${maxRetries}）`;
+});
 
 function blockContent(page: SlideDslPage | null, blockType: string): string {
   if (!page) {
@@ -39,19 +109,14 @@ function blockContent(page: SlideDslPage | null, blockType: string): string {
   return page.blocks.find((item) => item.block_type === blockType)?.content ?? '';
 }
 
-function prevSlide() {
-  if (!canGoPrev.value) {
-    return;
-  }
-  currentSlideIndex.value -= 1;
+function formatMs(value: number): string {
+  const safe = Math.max(0, Math.floor(value / 1000));
+  const minutes = String(Math.floor(safe / 60)).padStart(2, '0');
+  const seconds = String(safe % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
 }
 
-function nextSlide() {
-  if (!canGoNext.value) {
-    return;
-  }
-  currentSlideIndex.value += 1;
-}
+const displayedDurationLabel = computed(() => `${formatMs(displayedGlobalMs.value)} / ${formatMs(totalDurationMs.value)}`);
 
 function clampCurrentSlide() {
   if (!pages.value.length) {
@@ -63,11 +128,20 @@ function clampCurrentSlide() {
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'ArrowLeft') {
-    prevSlide();
+    void navigateToSlide(currentSlideIndex.value - 1, true);
   }
   if (event.key === 'ArrowRight') {
-    nextSlide();
+    void navigateToSlide(currentSlideIndex.value + 1, true);
   }
+}
+
+async function refreshSlides() {
+  const [assetDetail, slides] = await Promise.all([
+    fetchAssetDetail(assetId.value),
+    fetchAssetSlides(assetId.value),
+  ]);
+  asset.value = assetDetail;
+  slidesResponse.value = slides;
 }
 
 async function loadSlides() {
@@ -75,21 +149,268 @@ async function loadSlides() {
   errorMessage.value = '';
 
   try {
-    const [assetDetail, slides] = await Promise.all([
-      fetchAssetDetail(assetId.value),
-      fetchAssetSlides(assetId.value),
-    ]);
-    asset.value = assetDetail;
-    slidesResponse.value = slides;
+    await refreshSlides();
+    const slides = slidesResponse.value;
 
-    if (!slides.slides_dsl || slides.slides_status !== 'ready') {
+    if (!slides?.slides_dsl || slides.slides_status !== 'ready') {
       throw new Error('当前演示内容尚未就绪，请先在工作区触发生成。');
     }
+    syncToSlideStart(currentSlideIndex.value);
     clampCurrentSlide();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '演示页面加载失败。';
   } finally {
     loading.value = false;
+  }
+}
+
+async function ensureTtsForPage(pageIndex: number, prefetchNext = true) {
+  const response = await ensureAssetSlideTts(assetId.value, {
+    page_index: pageIndex,
+    prefetch_next: prefetchNext,
+  });
+  if (response.message) {
+    playbackMessage.value = response.message;
+  }
+}
+
+async function loadAudioAndSeek(audioUrl: string, seekMs: number): Promise<void> {
+  const audio = audioEl.value;
+  if (!audio) {
+    return;
+  }
+
+  const targetSec = Math.max(0, seekMs / 1000);
+  if (audio.src !== audioUrl) {
+    await new Promise<void>((resolve, reject) => {
+      const handleLoaded = () => {
+        audio.removeEventListener('loadedmetadata', handleLoaded);
+        audio.removeEventListener('error', handleError);
+        resolve();
+      };
+      const handleError = () => {
+        audio.removeEventListener('loadedmetadata', handleLoaded);
+        audio.removeEventListener('error', handleError);
+        reject(new Error('音频加载失败。'));
+      };
+      audio.addEventListener('loadedmetadata', handleLoaded);
+      audio.addEventListener('error', handleError);
+      audio.src = audioUrl;
+      audio.load();
+    });
+  }
+
+  audio.currentTime = targetSec;
+}
+
+function pausePlayback(clearMessage = false) {
+  const audio = audioEl.value;
+  if (audio) {
+    audio.pause();
+  }
+  setPlaying(false);
+  if (clearMessage) {
+    playbackMessage.value = '';
+  }
+}
+
+function clearWaitingTimer() {
+  if (waitingPollTimer.value !== null) {
+    window.clearTimeout(waitingPollTimer.value);
+    waitingPollTimer.value = null;
+  }
+}
+
+function clearWaitingState() {
+  waitingNextPageIndex.value = null;
+  waitingResumePlayback.value = false;
+  clearWaitingTimer();
+}
+
+function scheduleWaitingNextPagePoll() {
+  clearWaitingTimer();
+  waitingPollTimer.value = window.setTimeout(() => {
+    waitingPollTimer.value = null;
+    void pollWaitingNextPage();
+  }, 2500);
+}
+
+async function pollWaitingNextPage() {
+  const nextIndex = waitingNextPageIndex.value;
+  if (nextIndex === null) {
+    return;
+  }
+
+  try {
+    await ensureTtsForPage(nextIndex, true);
+    await refreshSlides();
+    const nextPage = pages.value[nextIndex];
+    const nextManifest = ttsManifestItems.value.find((item) => item.slide_key === nextPage?.slide_key);
+    if (!nextManifest) {
+      clearWaitingState();
+      playbackMessage.value = '下一页状态异常，请手动重试。';
+      return;
+    }
+
+    if (nextManifest.status === 'ready' && nextManifest.audio_url) {
+      const shouldResume = waitingResumePlayback.value;
+      clearWaitingState();
+      currentSlideIndex.value = nextIndex;
+      syncToSlideStart(nextIndex);
+      if (shouldResume) {
+        await startPlaybackForCurrentSlide(0);
+      }
+      return;
+    }
+
+    if (nextManifest.status === 'failed') {
+      clearWaitingState();
+      failedNextPageIndex.value = nextIndex;
+      playbackMessage.value = `下一页音频生成失败：${nextManifest.error_message || '未知错误'}。请点击“重试下一页”。`;
+      return;
+    }
+
+    scheduleWaitingNextPagePoll();
+  } catch (error) {
+    clearWaitingState();
+    playbackMessage.value = error instanceof Error ? error.message : '轮询下一页状态失败。';
+  }
+}
+
+async function startPlaybackForCurrentSlide(seekMs: number) {
+  if (!currentPage.value) {
+    return;
+  }
+  playbackBusy.value = true;
+  failedNextPageIndex.value = null;
+  try {
+    await ensureTtsForPage(currentSlideIndex.value, true);
+    await refreshSlides();
+    const manifestItem = currentManifestItem.value;
+    if (!manifestItem || manifestItem.status !== 'ready' || !manifestItem.audio_url) {
+      pausePlayback();
+      playbackMessage.value = manifestItem?.status === 'failed'
+        ? (manifestItem.error_message || '当前页音频生成失败，请重试。')
+        : '当前页音频生成中，请稍后点击播放继续。';
+      return;
+    }
+
+    await loadAudioAndSeek(manifestItem.audio_url, seekMs);
+    const audio = audioEl.value;
+    if (!audio) {
+      return;
+    }
+    await audio.play();
+    setPlaying(true);
+  } catch (error) {
+    pausePlayback();
+    playbackMessage.value = error instanceof Error ? error.message : '播放失败，请稍后重试。';
+  } finally {
+    playbackBusy.value = false;
+  }
+}
+
+async function handleAutoAdvanceAfterEnded() {
+  if (!autoPageEnabled.value || !canGoNext.value) {
+    setPlaying(false);
+    return;
+  }
+
+  const nextIndex = currentSlideIndex.value + 1;
+  try {
+    await ensureTtsForPage(nextIndex, true);
+    await refreshSlides();
+    const nextPage = pages.value[nextIndex];
+    const nextManifest = ttsManifestItems.value.find((item) => item.slide_key === nextPage?.slide_key);
+    if (nextManifest?.status === 'failed') {
+      clearWaitingState();
+      failedNextPageIndex.value = nextIndex;
+      pausePlayback();
+      playbackMessage.value = `下一页音频生成失败：${nextManifest.error_message || '未知错误'}。请点击“重试下一页”。`;
+      return;
+    }
+    if (nextManifest?.status !== 'ready') {
+      pausePlayback();
+      failedNextPageIndex.value = null;
+      waitingNextPageIndex.value = nextIndex;
+      waitingResumePlayback.value = true;
+      playbackMessage.value = '下一页音频生成中，已自动暂停并等待就绪后续播。';
+      scheduleWaitingNextPagePoll();
+      return;
+    }
+
+    clearWaitingState();
+    currentSlideIndex.value = nextIndex;
+    syncToSlideStart(nextIndex);
+    await startPlaybackForCurrentSlide(0);
+  } catch (error) {
+    pausePlayback();
+    playbackMessage.value = error instanceof Error ? error.message : '自动翻页失败。';
+  }
+}
+
+async function navigateToSlide(index: number, fromUser: boolean) {
+  if (index < 0 || index >= pages.value.length) {
+    return;
+  }
+  const shouldResume = fromUser && isPlaying.value;
+  clearWaitingState();
+  pausePlayback();
+  currentSlideIndex.value = index;
+  syncToSlideStart(index);
+  if (shouldResume) {
+    await startPlaybackForCurrentSlide(0);
+  }
+}
+
+async function togglePlayPause() {
+  if (isPlaying.value) {
+    pausePlayback(true);
+    return;
+  }
+  await startPlaybackForCurrentSlide(currentPageElapsedMs.value);
+}
+
+function onTimelineInput(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value || 0);
+  beginPreview(value);
+}
+
+async function onTimelineCommit() {
+  const target = endPreviewAndGetSeekTarget();
+  const seekTarget = seekGlobalMs(target);
+  const shouldResume = isPlaying.value;
+  clearWaitingState();
+  pausePlayback();
+  currentSlideIndex.value = seekTarget.pageIndex;
+  setCurrentPageElapsedMs(seekTarget.pageElapsedMs);
+  if (shouldResume) {
+    await startPlaybackForCurrentSlide(seekTarget.pageElapsedMs);
+  }
+}
+
+async function retryNextPage() {
+  if (failedNextPageIndex.value === null) {
+    return;
+  }
+  playbackBusy.value = true;
+  try {
+    clearWaitingState();
+    const response = await retryNextAssetSlideTts(assetId.value, {
+      current_page_index: currentSlideIndex.value,
+    });
+    playbackMessage.value = response.message;
+    await refreshSlides();
+    if (failedNextPageIndex.value !== null) {
+      waitingNextPageIndex.value = failedNextPageIndex.value;
+      waitingResumePlayback.value = true;
+      failedNextPageIndex.value = null;
+      scheduleWaitingNextPagePoll();
+    }
+  } catch (error) {
+    playbackMessage.value = error instanceof Error ? error.message : '重试下一页失败。';
+  } finally {
+    playbackBusy.value = false;
   }
 }
 
@@ -148,11 +469,29 @@ watch(
 );
 
 onMounted(() => {
+  const audio = new Audio();
+  audioEl.value = audio;
+  audio.addEventListener('timeupdate', () => {
+    setCurrentPageElapsedMs(audio.currentTime * 1000);
+  });
+  audio.addEventListener('ended', () => {
+    void handleAutoAdvanceAfterEnded();
+  });
+  audio.addEventListener('error', () => {
+    pausePlayback();
+    playbackMessage.value = '音频播放异常，请重试。';
+  });
   window.addEventListener('keydown', handleKeydown);
   void loadSlides();
 });
 
 onUnmounted(() => {
+  clearWaitingState();
+  pausePlayback();
+  if (audioEl.value) {
+    audioEl.value.src = '';
+    audioEl.value = null;
+  }
   window.removeEventListener('keydown', handleKeydown);
 });
 </script>
@@ -162,11 +501,15 @@ onUnmounted(() => {
     <section class="slides-shell">
       <header class="slides-header">
         <div>
-          <p class="slides-kicker">Slides / Spec 11C</p>
+          <p class="slides-kicker">Slides / Spec 12</p>
           <h1>{{ asset?.title ?? '演示播放页' }}</h1>
           <p class="slides-meta">
             状态：{{ effectiveSlidesStatus }}
             <span v-if="qualityScore !== null"> · 质量分：{{ qualityScore.toFixed(2) }}</span>
+          </p>
+          <p class="slides-meta">
+            TTS：{{ slidesResponse?.tts_status ?? 'not_generated' }}
+            <span> · Playback：{{ slidesResponse?.playback_status ?? 'not_ready' }}</span>
           </p>
           <p v-if="generationMeta && isSlidesReady" class="slides-meta">
             策略：{{ generationMeta.requested_strategy }} → {{ generationMeta.applied_strategy }}
@@ -202,17 +545,52 @@ onUnmounted(() => {
       <section v-else class="slides-layout">
         <section class="slides-stage">
           <header class="slides-stage__toolbar">
-            <button type="button" class="toolbar-button toolbar-button--ghost" :disabled="!canGoPrev" @click="prevSlide">
+            <button type="button" class="toolbar-button toolbar-button--ghost" :disabled="!canGoPrev" @click="navigateToSlide(currentSlideIndex - 1, true)">
               上一页
             </button>
             <p class="slides-stage__counter">
               {{ pages.length ? `${currentSlideIndex + 1} / ${pages.length}` : '0 / 0' }}
             </p>
-            <button type="button" class="toolbar-button" :disabled="!canGoNext" @click="nextSlide">
+            <button type="button" class="toolbar-button" :disabled="!canGoNext" @click="navigateToSlide(currentSlideIndex + 1, true)">
               下一页
             </button>
           </header>
           <p class="slides-stage__hint">快捷键：← / → 切换页面</p>
+
+          <section class="slides-player-bar">
+            <button type="button" class="toolbar-button" :disabled="playbackBusy" @click="togglePlayPause">
+              {{ isPlaying ? '暂停' : '播放' }}
+            </button>
+            <label class="slides-player-bar__auto">
+              <input
+                type="checkbox"
+                :checked="autoPageEnabled"
+                @change="setAutoPageEnabled(($event.target as HTMLInputElement).checked)"
+              />
+              自动翻页
+            </label>
+            <input
+              class="slides-player-bar__range"
+              type="range"
+              min="0"
+              :max="Math.max(totalDurationMs, 1)"
+              :value="displayedGlobalMs"
+              @input="onTimelineInput"
+              @change="onTimelineCommit"
+            />
+            <span class="slides-player-bar__time">{{ displayedDurationLabel }}</span>
+          </section>
+
+          <p v-if="playbackMessage" class="slides-playback-message">{{ playbackMessage }}</p>
+          <button
+            v-if="failedNextPageIndex !== null"
+            type="button"
+            class="toolbar-button"
+            :disabled="playbackBusy"
+            @click="retryNextPage"
+          >
+            重试下一页
+          </button>
 
           <nav v-if="pages.length" class="slides-page-nav" aria-label="演示分页目录">
             <button
@@ -221,7 +599,7 @@ onUnmounted(() => {
               type="button"
               class="slides-page-nav__item"
               :class="{ 'slides-page-nav__item--active': index === currentSlideIndex }"
-              @click="currentSlideIndex = index"
+              @click="navigateToSlide(index, true)"
             >
               <span class="slides-page-nav__index">{{ index + 1 }}</span>
               <span class="slides-page-nav__title">{{ blockContent(page, 'title') || page.stage }}</span>
@@ -230,8 +608,18 @@ onUnmounted(() => {
 
           <article v-if="currentPage" class="slides-section">
             <h2>{{ currentSlideIndex + 1 }}. {{ blockContent(currentPage, 'title') || currentPage.stage }}</h2>
-            <p class="slides-goal">{{ blockContent(currentPage, 'goal') }}</p>
-            <p class="slides-evidence">{{ blockContent(currentPage, 'evidence') }}</p>
+            <p
+              class="slides-goal"
+              :class="{ 'slides-section__active-cue': activeCueBlockId?.includes(':goal:') }"
+            >
+              {{ blockContent(currentPage, 'goal') }}
+            </p>
+            <p
+              class="slides-evidence"
+              :class="{ 'slides-section__active-cue': activeCueBlockId?.includes(':evidence:') }"
+            >
+              {{ blockContent(currentPage, 'evidence') }}
+            </p>
           </article>
           <section v-else class="slides-empty">暂无可播放页面。</section>
         </section>
@@ -245,6 +633,10 @@ onUnmounted(() => {
           <p class="slides-script">
             {{ currentPage ? blockContent(currentPage, 'script') : '切换页面后查看讲稿。' }}
           </p>
+          <p class="slides-meta">
+            当前页音频：{{ currentManifestItem?.status ?? 'pending' }}
+          </p>
+          <p v-if="currentTtsRetryHint" class="slides-meta slides-meta--retry">{{ currentTtsRetryHint }}</p>
 
           <ul v-if="currentPage?.citations.length" class="slides-citations">
             <li v-for="(citation, idx) in currentPage.citations" :key="`${currentPage.slide_key}-${idx}`">
@@ -306,6 +698,10 @@ onUnmounted(() => {
 .slides-meta {
   margin: 0;
   color: #4d5b6b;
+}
+
+.slides-meta--retry {
+  color: #7b3f00;
 }
 
 .slides-back {
@@ -370,6 +766,41 @@ onUnmounted(() => {
   margin: 0 0 0.7rem;
   color: #687586;
   font-size: 0.88rem;
+}
+
+.slides-player-bar {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.slides-player-bar__auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #5c6878;
+  font-size: 0.88rem;
+}
+
+.slides-player-bar__range {
+  width: 100%;
+}
+
+.slides-player-bar__time {
+  color: #5c6878;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+}
+
+.slides-playback-message {
+  margin: 0 0 0.75rem;
+  color: #7b3f00;
+  background: #fff3e2;
+  border: 1px solid #e5c99f;
+  border-radius: 0.7rem;
+  padding: 0.5rem 0.7rem;
 }
 
 .slides-page-nav {
@@ -452,6 +883,12 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.slides-section__active-cue {
+  background: #fff4df;
+  border-left: 3px solid #b26f24;
+  padding-left: 0.55rem;
+}
+
 .slides-evidence {
   opacity: 0.86;
 }
@@ -499,6 +936,10 @@ onUnmounted(() => {
 
   .slides-header {
     flex-direction: column;
+  }
+
+  .slides-player-bar {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -21,6 +21,8 @@ from app.schemas.slide_dsl import (
     SlideFixLog,
     SlideGenerationMeta,
     SlidePageDsl,
+    SlidePlaybackPlan,
+    SlideTtsManifest,
     SlidesDslPayload,
 )
 from app.schemas.slide_lesson_plan import AssetLessonPlanPayload, LessonPlanStage
@@ -30,6 +32,11 @@ from app.services.llm_service import (
     generate_slides_stage_copy,
 )
 from app.services.slide_fix_service import repair_low_quality_pages
+from app.services.slide_playback_service import (
+    build_playback_plan_from_slides,
+    build_tts_manifest_placeholders,
+    resolve_tts_status,
+)
 from app.services.slide_quality_service import (
     evaluate_slides_quality,
     validate_slides_must_pass,
@@ -297,6 +304,12 @@ def run_asset_slides_dsl_pipeline(
         quality_report = evaluate_slides_quality(slides_dsl)
 
     presentation.slides_dsl = slides_dsl.model_dump(mode="json")
+    presentation.tts_manifest = build_tts_manifest_placeholders(slides_dsl).model_dump(
+        mode="json"
+    )
+    presentation.playback_plan = build_playback_plan_from_slides(slides_dsl).model_dump(
+        mode="json"
+    )
     presentation.dsl_quality_report = {
         "must_pass": must_pass_report.model_dump(mode="json"),
         "quality": quality_report.model_dump(mode="json"),
@@ -357,13 +370,36 @@ def get_asset_slides_snapshot(db: Session, asset_id: str) -> AssetSlidesResponse
         if isinstance(item, dict):
             fix_logs.append(SlideFixLog.model_validate(item))
 
+    tts_manifest = SlideTtsManifest()
+    playback_plan = SlidePlaybackPlan()
+
+    presentation_tts_manifest = getattr(presentation, "tts_manifest", None)
+    if isinstance(presentation_tts_manifest, dict):
+        tts_manifest = SlideTtsManifest.model_validate(presentation_tts_manifest)
+    elif slides_dsl is not None:
+        tts_manifest = build_tts_manifest_placeholders(slides_dsl)
+
+    presentation_playback_plan = getattr(presentation, "playback_plan", None)
+    if isinstance(presentation_playback_plan, dict):
+        playback_plan = SlidePlaybackPlan.model_validate(presentation_playback_plan)
+    elif slides_dsl is not None:
+        playback_plan = build_playback_plan_from_slides(slides_dsl)
+
+    tts_status = resolve_tts_status([item.status for item in tts_manifest.pages])
+    playback_status = "ready" if playback_plan.pages else "not_ready"
+
     return AssetSlidesResponse(
         asset_id=asset.id,
         slides_status=asset.slides_status,
+        tts_status=tts_status,
+        playback_status=playback_status,
+        auto_page_supported=playback_status == "ready",
         slides_dsl=slides_dsl,
         must_pass_report=must_pass_report,
         quality_report=quality_report,
         fix_logs=fix_logs,
         generation_meta=generation_meta,
         shadow_report=shadow_report,
+        tts_manifest=tts_manifest,
+        playback_plan=playback_plan,
     )

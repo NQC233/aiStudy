@@ -29,6 +29,14 @@ class EmbeddingRequestError(RuntimeError):
     pass
 
 
+class SlideTtsConfigurationError(RuntimeError):
+    pass
+
+
+class SlideTtsRequestError(RuntimeError):
+    pass
+
+
 class ClassifyTaskExceptionTests(unittest.TestCase):
     def test_marks_configuration_errors_as_non_retryable_input_invalid(self) -> None:
         failure = classify_task_exception(MinerUConfigurationError("missing api key"))
@@ -57,6 +65,16 @@ class ClassifyTaskExceptionTests(unittest.TestCase):
 
     def test_marks_embedding_request_error_as_retryable(self) -> None:
         failure = classify_task_exception(EmbeddingRequestError("remote error"))
+        self.assertEqual(failure.error_code, "external_dependency")
+        self.assertTrue(failure.retryable)
+
+    def test_marks_tts_configuration_error_as_non_retryable(self) -> None:
+        failure = classify_task_exception(SlideTtsConfigurationError("invalid voice"))
+        self.assertEqual(failure.error_code, "input_invalid")
+        self.assertFalse(failure.retryable)
+
+    def test_marks_tts_request_error_as_retryable_external_dependency(self) -> None:
+        failure = classify_task_exception(SlideTtsRequestError("provider timeout"))
         self.assertEqual(failure.error_code, "external_dependency")
         self.assertTrue(failure.retryable)
 

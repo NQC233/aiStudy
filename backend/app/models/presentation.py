@@ -27,6 +27,8 @@ class Presentation(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     lesson_plan: Mapped[dict | None] = mapped_column(JSONB)
     slides_dsl: Mapped[dict | None] = mapped_column(JSONB)
+    tts_manifest: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    playback_plan: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     dsl_quality_report: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict
     )

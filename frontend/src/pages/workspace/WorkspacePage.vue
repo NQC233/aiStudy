@@ -14,6 +14,7 @@ import {
   fetchAssetParsedDocument,
   fetchChatSessionMessages,
   fetchAssetPdfMeta,
+  fetchAssetSlides,
   getAssetPdfUrl,
   previewAnchor,
   rebuildAssetSlides,
@@ -27,6 +28,7 @@ import {
   type AssetParseStatusResponse,
   type AssetParsedDocumentResponse,
   type AssetPdfDescriptor,
+  type AssetSlidesResponse,
   type ChatCitationItem,
   type ChatMessageItem,
   type ChatSessionItem,
@@ -47,6 +49,7 @@ const assetId = computed(() => route.params.assetId as string);
 
 const asset = ref<AssetDetail | null>(null);
 const parseStatus = ref<AssetParseStatusResponse | null>(null);
+const slidesSnapshot = ref<AssetSlidesResponse | null>(null);
 const parsedDocumentResponse = ref<AssetParsedDocumentResponse | null>(null);
 const pdfMeta = ref<AssetPdfDescriptor | null>(null);
 const mindmapData = ref<AssetMindmapResponse | null>(null);
@@ -166,6 +169,41 @@ const slidesLocatorHint = computed(() => {
     parts.push(`块 ${targetBlockId.value}`);
   }
   return `${parts.join(' / ')}。`;
+});
+
+function formatRetryEta(value: string | undefined): string {
+  if (!value) {
+    return '';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleTimeString('zh-CN', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+const slidesRetryingItem = computed(() => {
+  const pages = slidesSnapshot.value?.tts_manifest?.pages ?? [];
+  return pages.find((item) => item.retry_meta?.auto_retry_pending);
+});
+
+const slidesRetrySummary = computed(() => {
+  const item = slidesRetryingItem.value;
+  if (!item?.retry_meta) {
+    return '';
+  }
+  const attempt = item.retry_meta.attempt ?? 0;
+  const maxRetries = item.retry_meta.max_retries ?? 0;
+  const eta = formatRetryEta(item.retry_meta.next_retry_eta);
+  if (eta) {
+    return `Slides 重试中（${attempt}/${maxRetries}），预计 ${eta}`;
+  }
+  return `Slides 重试中（${attempt}/${maxRetries}）`;
 });
 
 const rightTabs = [
@@ -321,9 +359,13 @@ async function refreshWorkspaceLight() {
       fetchAssetDetail(assetId.value),
       fetchAssetParseStatus(assetId.value),
     ]);
+    const slidesResult = await fetchAssetSlides(assetId.value).catch(() => null);
 
     asset.value = assetDetail;
     parseStatus.value = latestParseStatus;
+    if (slidesResult) {
+      slidesSnapshot.value = slidesResult;
+    }
     syncMindmapStatus(assetDetail.basic_resources.mindmap_status);
     syncSlidesProcessingClock(assetDetail.enhanced_resources.slides_status);
 
@@ -434,9 +476,13 @@ async function loadWorkspace() {
       fetchAssetDetail(assetId.value),
       fetchAssetParseStatus(assetId.value),
     ]);
+    const slidesSnapshotResult = await fetchAssetSlides(assetId.value).catch(() => null);
 
     asset.value = assetDetail;
     parseStatus.value = latestParseStatus;
+    if (slidesSnapshotResult) {
+      slidesSnapshot.value = slidesSnapshotResult;
+    }
     syncSlidesProcessingClock(assetDetail.enhanced_resources.slides_status);
 
     const [parsedDocumentResult, pdfMetaResult, mindmapResult] = await Promise.allSettled([
@@ -1072,6 +1118,9 @@ onUnmounted(() => {
           <p v-if="slidesProcessingHint" class="workspace-muted">
             {{ slidesProcessingHint }}
           </p>
+          <p v-if="slidesRetrySummary" class="workspace-muted">
+            {{ slidesRetrySummary }}
+          </p>
           <p v-if="resourceWarning" class="workspace-parse-error">
             {{ resourceWarning }}。你可以先查看状态并重试解析。
           </p>
@@ -1426,6 +1475,7 @@ onUnmounted(() => {
                 <li>解析进度：{{ parseProgressLabel }}</li>
                 <li>parsed_json：{{ parsedDocument ? '已就绪' : '未就绪' }}</li>
                 <li>导图状态：{{ mindmapData?.mindmap_status ?? asset.basic_resources.mindmap_status }}</li>
+                <li v-if="slidesRetrySummary">{{ slidesRetrySummary }}</li>
                 <li>状态同步：{{ lightRefreshing ? '同步中' : '空闲' }}</li>
               </ul>
 

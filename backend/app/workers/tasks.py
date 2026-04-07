@@ -16,6 +16,7 @@ from app.db.session import SessionLocal
 from app.models.asset import Asset
 from app.models.document_parse import DocumentParse
 from app.models.mindmap import Mindmap
+from app.models.presentation import Presentation
 from app.services import run_asset_mindmap_pipeline
 from app.services.document_parse_service import run_parse_pipeline
 from app.services.retrieval_service import (
@@ -24,6 +25,7 @@ from app.services.retrieval_service import (
 )
 from app.services.slide_dsl_service import run_asset_slides_dsl_pipeline
 from app.services.slide_lesson_plan_service import run_asset_lesson_plan_pipeline
+from app.services.slide_tts_service import run_asset_slide_tts_pipeline
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -124,6 +126,44 @@ def _retry_context(task: Task) -> dict[str, str | int | bool | None]:
         "next_retry_eta": None,
         "auto_retry_pending": False,
     }
+
+
+def _mark_tts_retry_pending(
+    asset_id: str,
+    slide_key: str,
+    retry_snapshot: dict[str, str | int | bool],
+    error_message: str,
+    error_code: str,
+) -> None:
+    db = SessionLocal()
+    try:
+        presentation = db.scalars(
+            select(Presentation)
+            .where(Presentation.asset_id == asset_id)
+            .with_for_update()
+        ).first()
+        if presentation is None or not isinstance(presentation.tts_manifest, dict):
+            return
+
+        manifest_payload = dict(presentation.tts_manifest)
+        pages = manifest_payload.get("pages")
+        if not isinstance(pages, list):
+            return
+
+        for page in pages:
+            if not isinstance(page, dict) or page.get("slide_key") != slide_key:
+                continue
+            page["status"] = "processing"
+            page["error_message"] = error_message
+            page["retry_meta"] = {
+                **retry_snapshot,
+                "error_code": error_code,
+            }
+            presentation.tts_manifest = manifest_payload
+            db.commit()
+            return
+    finally:
+        db.close()
 
 
 @celery_app.task(name="app.workers.tasks.ping")
@@ -301,5 +341,49 @@ def enqueue_generate_asset_slides_dsl(
     db = SessionLocal()
     try:
         return run_asset_slides_dsl_pipeline(db, asset_id, strategy=strategy)
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name="app.workers.tasks.enqueue_generate_asset_slide_tts")
+def enqueue_generate_asset_slide_tts(
+    self: Task,
+    asset_id: str,
+    slide_key: str,
+) -> dict[str, str | int | float]:
+    """执行资产指定页面的 TTS 生成任务。"""
+    db = SessionLocal()
+    try:
+        return run_asset_slide_tts_pipeline(db, asset_id=asset_id, slide_key=slide_key)
+    except Retry:
+        raise
+    except Exception as exc:  # pragma: no cover - Celery 任务需要把异常继续抛出给 Worker
+        failure = classify_task_exception(exc)
+        if _should_retry(self, failure.retryable):
+            retry_snapshot, delay = _build_task_retry_snapshot(self)
+            _mark_tts_retry_pending(
+                asset_id=asset_id,
+                slide_key=slide_key,
+                retry_snapshot=retry_snapshot,
+                error_message=failure.normalized_message,
+                error_code=failure.error_code,
+            )
+            logger.warning(
+                "TTS 任务进入自动重试: asset_id=%s slide_key=%s attempt=%s max_retries=%s error_code=%s",
+                asset_id,
+                slide_key,
+                retry_snapshot["attempt"],
+                retry_snapshot["max_retries"],
+                failure.error_code,
+            )
+            raise self.retry(exc=exc, countdown=delay, max_retries=_retry_limit())
+
+        logger.exception(
+            "TTS 任务执行失败且不再重试: asset_id=%s slide_key=%s",
+            asset_id,
+            slide_key,
+            exc_info=exc,
+        )
+        raise
     finally:
         db.close()

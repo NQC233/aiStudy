@@ -33,6 +33,7 @@ def classify_task_exception(exception: Exception) -> TaskFailureInfo:
     if names & {
         "MinerUConfigurationError",
         "EmbeddingConfigurationError",
+        "SlideTtsConfigurationError",
         "ValueError",
         "TypeError",
     }:
@@ -48,6 +49,7 @@ def classify_task_exception(exception: Exception) -> TaskFailureInfo:
     if names & {
         "MinerURequestError",
         "EmbeddingRequestError",
+        "SlideTtsRequestError",
         "ConnectionError",
         "OSError",
     }:

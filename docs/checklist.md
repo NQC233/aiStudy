@@ -31,6 +31,22 @@
 - [x] `docs/specs/` 为唯一权威 Spec 目录，`docs/superpowers/` 仅作参考/草稿
 - [x] Slides 重建支持陈旧 `processing` 状态自动回收再入队，避免历史卡死导致不可重试
 - [x] lesson_plan 成功后保持 `slides_status=processing`，仅在 DSL 任务完成后置 `ready`，避免“伪 ready”
+- [x] Spec 12 规划已落地到 `docs/specs/spec-12-tts-and-auto-paging.md`，后续按该 Spec 实施
+- [x] Spec 11C 实际交付为自研分页渲染（非 Reveal.js runtime），文档口径已修正
+- [x] LLM slides JSON 解析增加公式转义容错，减少 `llm_generation_failed` 即时回退
+- [x] Spec 12 设计收敛：自研分页渲染 + 懒生成预取 + block 级 cue + seek 恢复
+- [x] Spec 12 第 1 轮已落地播放数据契约：`tts_manifest + playback_plan + tts_status/playback_status`
+- [x] Spec 12 第 2 轮已接入 DashScope TTS 异步链路（懒生成/next 预取入口 + 失败重试入口）
+- [x] Spec 12 第 3 轮已接入播放页状态机（播放/暂停/进度条 seek/自动翻页/失败暂停重试）
+- [x] Spec 12 第 4 轮补充“下一页生成中自动轮询续播”，减少手动重试中断
+- [x] Spec 12 第 5 轮新增 Playwright 自动化验收脚本（播放续播与失败重试路径）
+- [x] Spec 12 调试修复：TTS 切换到 DashScope SDK + cosyvoice-v3-flash 默认模型，修复 `HTTP 404` 首帧失败
+- [x] Spec 12 第 6 轮新增 docker 联调版 E2E 验收脚本（真实 API + worker + TTS 状态轮询）
+- [x] Spec 12 第 7 轮补齐 docker E2E 资产自动发现（无须手工传 `SPEC12_E2E_ASSET_ID`）
+- [x] Spec 12 第 8 轮补齐 TTS 任务错误分级与自动重试（配置错误不重试，请求错误可重试）
+- [x] Spec 12 第 9 轮补齐页级 `retry_meta` 回写（重试中状态可观测）
+- [x] Spec 12 第 10 轮接入前端重试中提示（展示 attempt/max_retries/eta）
+- [x] Spec 12 第 11 轮在工作区状态卡显示 Slides 重试摘要（无需进入播放页）
 
 ## 3. 当前待确认事项
 
@@ -61,14 +77,14 @@
 - [x] Spec 10C：工作区布局与交互重整
 - [x] Spec 11A：演示文稿领域模型与备课层生成
 - [x] Spec 11B：页面 DSL 生成与分级校验
-- [x] Spec 11C：Reveal 渲染播放页与工作区入口
+- [x] Spec 11C：演示播放页与工作区入口（当前为自研分页渲染）
 
 ### 待开始
 
+- [ ] Spec 12：TTS 与自动翻页（进行中：第 1 轮已完成契约与后端占位编排）
 
 ### 暂缓到后续阶段
 
-- [ ] Spec 12：TTS 与自动翻页
 - [ ] Spec 13：Anki CSV 导出
 - [ ] Spec 14：课后习题
 
@@ -88,7 +104,7 @@
 12. Spec 10C：重整工作区布局层级和移动端折叠交互
 13. Spec 11A：演示文稿领域模型与备课层生成
 14. Spec 11B：页面 DSL 生成与分级校验
-15. Spec 11C：Reveal 渲染播放页与工作区入口
+15. Spec 11C：演示播放页与工作区入口（当前为自研分页渲染）
 16. Spec 12：TTS 与自动翻页
 17. Spec 13：Anki CSV 导出
 18. Spec 14：课后习题
@@ -564,7 +580,7 @@
   - must-pass 未单独暴露查询接口，当前通过持久化报告供后续 11C/运维使用
   - 局部修复当前为规则修复，未接入模型驱动的更细粒度重写
 - 下一轮建议：
-  - 进入 `Spec 11C：Reveal 渲染播放页与工作区入口`
+  - 进入 `Spec 11C：演示播放页与工作区入口`
   - 复用 `slides_dsl + dsl_quality_report` 直接构建 render payload 与播放入口
 - 建议提交信息：
   - `feat: add slides dsl generation quality gates and page-level fix pipeline for spec 11b`
@@ -572,12 +588,17 @@
 ### Spec 11C 交付记录
 
 - 完成内容：
-  - 新增播放页路由与页面骨架，接入 Reveal.js 手动翻页
-  - 实现 DSL -> Reveal section 映射，页面可按 stage 模板展示
+  - 新增播放页路由与页面骨架，采用自研分页渲染（非 Reveal.js runtime）
+  - 实现 DSL -> 页级内容映射，页面按 stage 模板展示
   - 新增页级讲稿侧栏，跟随当前页展示 script 与引用
   - 新增引用回跳：从播放页点击 citation 回到工作区定位（page/block_id）
   - 工作区新增演示入口按钮与 slides 状态展示
   - 后端新增 slides 查询接口，统一返回 `slides_dsl + 质量报告 + 修复日志`
+  - 补充调试修复：
+    - 工作区仅在 `slides_status=processing` 时局部轮询，避免全局轮询回退
+    - 播放页错误态增加“返回工作区/重新生成”恢复动作
+    - 工作区增加 slides processing 超时提示
+    - 修复策略元数据展示时序，避免 processing 阶段误读为“快速回退”
 - 主要新增或修改文件：
   - `frontend/src/pages/slides/SlidesPlayPage.vue`
   - `frontend/src/router/routes.ts`
@@ -593,14 +614,321 @@
   - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
   - `cd frontend && npm run build` 已通过
 - 当前已知缺口：
-  - 播放页当前通过 CDN 动态加载 Reveal.js，离线环境需补本地静态资源方案
+  - 当前未使用 Reveal.js 视觉生态，分页视觉与动画表现仍偏基础
   - 尚未增加播放页自动化 UI 测试（目前以 build 和手动交互路径为主）
-  - 播放页样式为首版统一风格，后续可继续收敛模板视觉一致性
+  - 播放页样式为首版统一风格，后续需继续收敛模板视觉一致性与信息密度
 - 下一轮建议：
   - 进入 `Spec 12：TTS 与自动翻页`
-  - 先补播放页稳定性增强：Reveal 资源降级策略与播放页交互 E2E 测试
+  - 基于自研分页渲染实现统一时间轴控制（进度条、暂停、自动翻页）
 - 建议提交信息：
-  - `feat: add reveal slides player and workspace entry flow for spec 11c`
+  - `feat: add slides player and workspace entry flow for spec 11c`
+
+### Spec 12 交付记录（第 1 轮：播放契约与占位编排）
+
+- 完成内容：
+  - 新增页级 TTS Manifest 与 Playback Plan 数据结构（后端 schema）
+  - slides 快照接口新增 `tts_status`、`playback_status`、`auto_page_supported`
+  - 新增播放编排服务：
+    - 基于 `slides_dsl` 生成页级占位 `tts_manifest`
+    - 基于 `slides_dsl` 生成 block 级 cue 时间线 `playback_plan`
+    - 汇总页状态得到统一 `tts_status`
+  - 播放快照读取逻辑接入上述契约（若数据库无字段则自动回退到运行时占位生成）
+  - 新增 `presentations` 字段迁移：`tts_manifest` / `playback_plan`
+- 主要新增或修改文件：
+  - `backend/app/schemas/slide_dsl.py`
+  - `backend/app/services/slide_playback_service.py`
+  - `backend/app/services/slide_dsl_service.py`
+  - `backend/app/models/presentation.py`
+  - `backend/alembic/versions/20260406_0010_add_tts_and_playback_fields_to_presentations.py`
+  - `backend/tests/test_slide_playback_service.py`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_playback_service.py -v` 已通过（3 tests）
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_llm_service.py -v` 已通过（12 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+- 当前已知缺口：
+  - 仍未接入真实 TTS 生成任务与音频存储（当前为占位 manifest）
+  - 仍未实现“当前页懒生成 + 下一页预取 + 失败暂停重试”任务编排
+  - 前端播放页尚未接入统一时间轴控制与 seek 恢复
+- 下一轮建议：
+  - 实现 `slide_tts_service` 与 Celery 页级任务（懒生成、next 预取、失败回写与重试幂等）
+  - 前端接入播放器状态机与时间轴交互
+- 建议提交信息：
+  - `feat: scaffold slides tts manifest and playback plan contracts for spec 12`
+
+### Spec 12 交付记录（第 2 轮：DashScope TTS 异步链路）
+
+- 完成内容：
+  - 新增 `slide_tts_service`，接入 DashScope TTS 调用与音频解析（支持 `audio/*` 与 JSON/base64 回包）
+  - 复用阿里系配置体系，并新增 TTS 专用模型/voice/超时参数
+  - 新增页级触发接口：
+    - `POST /api/assets/{asset_id}/slides/tts/ensure`（当前页懒生成 + 可选 next 预取）
+    - `POST /api/assets/{asset_id}/slides/tts/retry-next`（自动暂停后重试下一页）
+  - 新增 Celery 任务 `enqueue_generate_asset_slide_tts`，按 `slide_key` 生成并回写页级状态
+  - DSL 成功后持久化初始化 `tts_manifest` 与 `playback_plan`，避免仅运行时回退
+  - 新增 OSS key 规则：`slides/v{version}/tts/{slide_key}.mp3`
+  - 前端 API 类型与调用方法已补齐（下一轮播放页接入可直接复用）
+- 主要新增或修改文件：
+  - `backend/app/services/slide_tts_service.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/app/services/slide_dsl_service.py`
+  - `backend/app/services/oss_service.py`
+  - `backend/app/schemas/slide_dsl.py`
+  - `backend/app/core/config.py`
+  - `backend/app/services/__init__.py`
+  - `backend/tests/test_slide_tts_service.py`
+  - `frontend/src/api/assets.ts`
+  - `.env.example`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_tts_service.py -v` 已通过（3 tests）
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_playback_service.py tests/test_slide_tts_service.py tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_llm_service.py -v` 已通过（18 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - 播放页尚未接入“音频主时钟驱动动画/翻页/seek 恢复”状态机
+  - 仍未补前端交互测试（播放/暂停/seek/预取失败暂停）
+  - TTS 任务暂未增加自动重试退避策略（当前为页级失败可见 + 显式重试）
+- 下一轮建议：
+  - 进入 Spec 12 第 3 轮：前端播放器状态机与控制条接入（含失败暂停提示与 retry-next）
+  - 补充 TTS 任务重试策略与回放链路 E2E 证据
+- 建议提交信息：
+  - `feat: add dashscope tts async generation and next-page retry endpoints for spec 12`
+
+### Spec 12 交付记录（第 3 轮：播放页状态机与时间轴）
+
+- 完成内容：
+  - 新增播放状态机与时间轴 composable：
+    - `isPlaying`、`autoPageEnabled`
+    - 全局时间轴预览/提交 seek
+    - 页级 cue 激活计算
+  - 播放页接入“视频式”控制条：
+    - 播放/暂停
+    - 自动翻页开关
+    - 全局进度条（拖动预览、松手 seek）
+  - 接入音频主时钟：
+    - `timeupdate` 驱动页内时间与 cue 状态
+    - `ended` 触发自动翻页与续播
+  - 接入失败策略：
+    - next 页 TTS 失败时自动暂停
+    - 展示错误并提供“重试下一页”按钮（调用 retry-next 接口）
+  - 手动翻页行为修正：翻页时中断当前音频，若原本在播放则在新页从头恢复播放
+- 主要新增或修改文件：
+  - `frontend/src/composables/useSlidesPlaybackTimeline.ts`
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+- 验证结果：
+  - `cd frontend && npm run build` 已通过
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_tts_service.py tests/test_slide_playback_service.py tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_llm_service.py -v` 已通过（18 tests）
+- 当前已知缺口：
+  - 仍未补前端自动化交互测试（播放/暂停/seek/自动翻页/失败暂停）
+  - 自动翻页在“下一页音频生成中”场景为暂停等待策略，未实现后台轮询自动恢复
+  - cue 激活当前按 block 粒度规则映射，后续可结合真实音频时长进一步校准
+- 下一轮建议：
+  - 补前端交互自动化测试（建议 Playwright）
+  - 视体验反馈决定是否增加“下一页生成中自动续播”轮询机制
+- 建议提交信息：
+  - `feat: add slides playback timeline state machine with seek and auto-page controls`
+
+### Spec 12 交付记录（第 4 轮：下一页自动续播轮询）
+
+- 完成内容：
+  - 新增“下一页音频生成中”自动轮询机制：
+    - 自动翻页遇到 next 页 `pending/processing` 时，不再仅提示手动恢复
+    - 播放器自动暂停并进入等待态，周期轮询 next 页状态
+    - next 页就绪后自动切页并续播
+  - 若轮询期间 next 页转为 `failed`：
+    - 自动退出等待态
+    - 提示错误并展示“重试下一页”按钮
+  - 清理策略：手动翻页、seek、页面卸载时会清理等待态与轮询定时器
+- 主要新增或修改文件：
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+- 验证结果：
+  - `cd frontend && npm run build` 已通过
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_tts_service.py tests/test_slide_playback_service.py tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_llm_service.py -v` 已通过（18 tests）
+- 当前已知缺口：
+  - 仍缺少前端自动化交互测试（播放/暂停/seek/自动翻页/等待态恢复）
+- 下一轮建议：
+  - 引入 Playwright 用例覆盖播放器核心路径，补齐 Spec 12 验收证据
+- 建议提交信息：
+  - `feat: auto-resume slide playback when next-page tts becomes ready`
+
+### Spec 12 交付记录（第 5 轮：Playwright 自动化验收）
+
+- 完成内容：
+  - 新增 Playwright 配置与 Spec 12 验收脚本：
+    - `frontend/playwright.config.ts`
+    - `frontend/tests/e2e/spec12-playback.spec.ts`
+  - 新增 npm 脚本：
+    - `npm run test:e2e:spec12`
+  - 验收脚本覆盖两条关键路径：
+    - 自动翻页在 next 页就绪后自动续播
+    - next 页失败后展示“重试下一页”并可触发重试
+  - 测试使用 API route mock + 媒体元素 mock，避免依赖真实后端/TTS 网络波动
+- 主要新增或修改文件：
+  - `frontend/package.json`
+  - `frontend/playwright.config.ts`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+- 验证结果：
+  - `cd frontend && npm run test:e2e:spec12` 已通过（2 tests）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - 当前为前端层验收（mock API），尚未覆盖联真实后端/worker 的端到端环境
+- 下一轮建议：
+  - 增补 docker 联调版 E2E（真实 API + worker）并保留 mock 版作为快速回归
+- 建议提交信息：
+  - `test: add playwright acceptance coverage for spec12 playback flows`
+
+### Spec 12 调试记录（TTS 首帧失败）
+
+- 现象：播放页第一页音频直接失败，后续页排队/失败交替。
+- 根因：
+  - 原实现默认走 `compatible-mode/v1/audio/speech`，该地址在当前 DashScope 环境返回 `404`。
+  - 用户指定模型 `cosyvoice-v3-flash` 下，旧默认音色 `longxiaochun` 也会触发引擎错误（需使用 v3 音色）。
+- 修复：
+  - TTS 生成链路改为 DashScope Python SDK (`dashscope.audio.tts_v2.SpeechSynthesizer`)。
+  - 默认模型调整为 `cosyvoice-v3-flash`。
+  - 默认音色调整为 `longxiaochun_v3`。
+  - 增加音色兼容映射：`cosyvoice-v3* + longxiaochun -> longxiaochun_v3`。
+- 主要修改文件：
+  - `backend/app/services/slide_tts_service.py`
+  - `backend/app/core/config.py`
+  - `backend/pyproject.toml`
+  - `backend/tests/test_slide_tts_service.py`
+  - `.env.example`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_tts_service.py -v` 已通过（5 tests）
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_tts_service.py tests/test_slide_playback_service.py tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_llm_service.py -v` 已通过（20 tests）
+
+### Spec 12 交付记录（第 6 轮：Docker 联调 E2E）
+
+- 完成内容：
+  - 新增 docker 联调 Playwright 配置：`frontend/playwright.docker.config.ts`
+  - 新增真实链路验收脚本：`frontend/tests/e2e/spec12-docker-real.spec.ts`
+    - 通过真实 API 调用 `slides/tts/ensure`
+    - 轮询 `slides` 快照，验证前两页音频状态到达 `ready`
+    - 校验 `audio_url` 已回写
+  - 新增 npm 脚本：`npm run test:e2e:spec12:docker`
+- 主要新增或修改文件：
+  - `frontend/package.json`
+  - `frontend/playwright.docker.config.ts`
+  - `frontend/tests/e2e/spec12-docker-real.spec.ts`
+- 验证结果：
+  - `cd frontend && SPEC12_E2E_ASSET_ID=d9ae48b3-7d9a-4606-a8e9-fa11e6e9b645 npm run test:e2e:spec12:docker` 已通过（1 test）
+  - `cd frontend && npm run build` 已通过
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_tts_service.py tests/test_slide_playback_service.py tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_llm_service.py -v` 已通过（20 tests）
+- 当前已知缺口：
+  - docker 联调 E2E 仍依赖外部 TTS 配置与可用资产 ID（通过环境变量注入）
+- 下一轮建议：
+  - 增加“自动创建测试资产并触发生成”的准备脚本，减少手工传入 asset id
+- 建议提交信息：
+  - `test: add docker integrated spec12 e2e for real tts pipeline`
+
+### Spec 12 交付记录（第 7 轮：E2E 资产自动发现）
+
+- 完成内容：
+  - docker 联调 E2E 支持自动发现可用资产：
+    - 优先使用 `SPEC12_E2E_ASSET_ID`
+    - 未设置时自动扫描 `/api/assets`，筛选 `slides_status=ready` 且页面数 >= 2 的资产
+  - 降低本地/联调执行门槛，不再强依赖手工先查 asset id
+- 主要新增或修改文件：
+  - `frontend/tests/e2e/spec12-docker-real.spec.ts`
+- 验证结果：
+  - `cd frontend && npm run test:e2e:spec12:docker` 已通过（1 test）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - 当环境中不存在 ready 的 slides 资产时，仍需先完成资产生成
+- 下一轮建议：
+  - 增加测试前置 bootstrap 脚本（自动上传样例 PDF + 触发生成）
+- 建议提交信息：
+  - `test: auto-discover candidate asset for docker spec12 e2e`
+
+### Spec 12 交付记录（第 8 轮：TTS 自动重试策略）
+
+- 完成内容：
+  - 任务可靠性错误分级新增 TTS 语义：
+    - `SlideTtsConfigurationError` -> `input_invalid`（不重试）
+    - `SlideTtsRequestError` -> `external_dependency`（可重试）
+  - `enqueue_generate_asset_slide_tts` 接入统一自动重试逻辑（指数退避 + 重试上限）
+  - 新增/补强单测覆盖上述分类规则
+- 主要新增或修改文件：
+  - `backend/app/core/task_reliability.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/tests/test_task_reliability_service.py`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_task_reliability_service.py tests/test_slide_tts_service.py tests/test_slide_playback_service.py tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py tests/test_llm_service.py -v` 已通过（31 tests）
+  - `cd frontend && npm run test:e2e:spec12:docker` 已通过（1 test）
+- 当前已知缺口：
+  - TTS 任务重试中间态仅在日志侧可见，尚未额外暴露专门的重试观测字段
+- 下一轮建议：
+  - 如需增强可观测性，可在 `tts_manifest` 层追加 `retry_meta`（attempt/next_retry_eta）
+- 建议提交信息：
+  - `fix: add retry classification and backoff retries for slide tts tasks`
+
+### Spec 12 交付记录（第 9 轮：页级重试可观测）
+
+- 完成内容：
+  - `SlideTtsManifestItem` 新增 `retry_meta` 字段（attempt/max_retries/next_retry_eta 等）
+  - TTS 任务进入自动重试时，会把对应页状态回写为 `processing` 并附带 `retry_meta`
+  - TTS 任务重新入队/成功后会清理 `retry_meta`，避免脏状态残留
+  - 前端 API 类型同步支持读取 `retry_meta`
+- 主要新增或修改文件：
+  - `backend/app/schemas/slide_dsl.py`
+  - `backend/app/services/slide_tts_service.py`
+  - `backend/app/workers/tasks.py`
+  - `backend/tests/test_slide_tts_service.py`
+  - `frontend/src/api/assets.ts`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_tts_service.py tests/test_task_reliability_service.py -v` 已通过（16 tests）
+  - `cd frontend && npm run build` 已通过
+  - `cd frontend && npm run test:e2e:spec12:docker` 已通过（1 test）
+- 当前已知缺口：
+  - 播放页尚未展示 `retry_meta`（已具备数据契约）
+- 下一轮建议：
+  - 在播放页提示“自动重试中（第 n 次，预计 xx:xx）”提升可解释性
+- 建议提交信息：
+  - `feat: expose slide-level tts retry metadata in manifest`
+
+### Spec 12 交付记录（第 10 轮：前端重试提示）
+
+- 完成内容：
+  - 播放页接入当前页 `retry_meta` 展示：
+    - 文案示例：`自动重试中（2/5），预计 20:30:00`
+  - 新增 mock Playwright 验收用例，覆盖“当前页自动重试中”可见性
+  - 后端服务重启同步（`backend`/`worker`）
+- 主要新增或修改文件：
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+- 验证结果：
+  - `cd frontend && npm run test:e2e:spec12` 已通过（3 tests）
+  - `cd frontend && npm run test:e2e:spec12:docker` 已通过（1 test）
+  - `cd frontend && npm run build` 已通过
+  - `docker compose up -d --force-recreate backend worker` 已执行
+- 当前已知缺口：
+  - retry 提示仍位于 notes 区域，后续可评估是否在顶部状态条同步展示
+- 下一轮建议：
+  - 在工作区 `slides` 状态卡中也显示页级重试信息，减少跳转播放页排障成本
+- 建议提交信息：
+  - `feat: show current-page tts retry progress hint on slides player`
+
+### Spec 12 交付记录（第 11 轮：工作区重试摘要）
+
+- 完成内容：
+  - 工作区接入 `fetchAssetSlides` 快照数据用于状态卡扩展
+  - 在工作区 summary 与状态面板展示 Slides 重试摘要：
+    - 文案示例：`Slides 重试中（2/5），预计 20:00:00`
+  - 新增 mock Playwright 用例，覆盖工作区重试摘要可见性
+- 主要新增或修改文件：
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+- 验证结果：
+  - `cd frontend && npm run test:e2e:spec12` 已通过（4 tests）
+  - `cd frontend && npm run test:e2e:spec12:docker` 已通过（1 test）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - 工作区当前仅展示“首个重试中页面”摘要，未逐页展开
+- 下一轮建议：
+  - 增加“查看重试详情”展开列表（按页显示状态/错误码/预计重试时间）
+- 建议提交信息：
+  - `feat: show slides tts retry summary on workspace status panels`
 
 ## 7. 相关文档
 
