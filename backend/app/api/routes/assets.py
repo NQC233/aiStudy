@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import get_db
 from app.schemas.anchor import AssetAnchorPreviewRequest, AssetAnchorPreviewResponse
-from app.schemas.asset import AssetDetail, AssetListItem
+from app.schemas.asset import AssetDeleteResponse, AssetDetail, AssetListItem
 from app.schemas.document_chunk import (
     AssetChunkListResponse,
     AssetChunkRebuildResponse,
@@ -69,7 +69,7 @@ from app.services.asset_reader_service import (
     get_asset_pdf_descriptor,
     preview_asset_anchor,
 )
-from app.services.asset_service import get_asset_detail, list_assets
+from app.services.asset_service import delete_asset, get_asset_detail, list_assets
 from app.workers.tasks import (
     enqueue_build_asset_kb,
     enqueue_generate_asset_mindmap,
@@ -99,6 +99,15 @@ def get_asset_detail_endpoint(
             detail="未找到对应的学习资产。",
         )
     return asset
+
+
+@router.delete("/{asset_id}", response_model=AssetDeleteResponse, summary="删除学习资产")
+def delete_asset_endpoint(
+    asset_id: str,
+    db: Session = Depends(get_db),
+) -> AssetDeleteResponse:
+    """删除资产及其关联数据，并尽量清理 OSS 存储对象。"""
+    return delete_asset(db, asset_id)
 
 
 @router.get(

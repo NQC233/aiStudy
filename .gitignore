@@ -15,3 +15,7 @@ backend/**/*.pyc
 .DS_Store
 .idea/
 .vscode/
+
+# Spec 12D 实验过程数据（仅保留模板，不跟踪运行产物）
+docs/specs/spec-12d-results*/
+docs/specs/spec-12d-question-dataset.jsonl

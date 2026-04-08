@@ -92,6 +92,9 @@ export function fetchAssets() {
 export function fetchAssetDetail(assetId) {
     return requestJson(`/api/assets/${assetId}`);
 }
+export function deleteAsset(assetId) {
+    return deleteJson(`/api/assets/${assetId}`);
+}
 export function fetchAssetPdfMeta(assetId) {
     return requestJson(`/api/assets/${assetId}/pdf-meta`);
 }

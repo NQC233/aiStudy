@@ -115,3 +115,38 @@ def upload_bytes(
     return OSSUploadResult(
         storage_key=storage_key, public_url=build_public_url(storage_key)
     )
+
+
+def delete_objects(storage_keys: list[str]) -> tuple[int, list[str]]:
+    """删除给定 OSS 对象，返回成功数量与失败 key。"""
+    if not storage_keys:
+        return 0, []
+
+    bucket = _create_bucket()
+    deleted_count = 0
+    failed_keys: list[str] = []
+    for key in storage_keys:
+        normalized = (key or "").strip().lstrip("/")
+        if not normalized:
+            continue
+        try:
+            bucket.delete_object(normalized)
+            deleted_count += 1
+        except Exception:
+            failed_keys.append(normalized)
+    return deleted_count, failed_keys
+
+
+def delete_asset_prefix_objects(user_id: str, asset_id: str) -> tuple[int, list[str]]:
+    """按资产前缀清理 OSS 对象，避免漏删未入库 key。"""
+    bucket = _create_bucket()
+    prefix = f"{_build_asset_prefix(user_id=user_id, asset_id=asset_id)}/"
+    deleted_count = 0
+    failed_keys: list[str] = []
+    for obj in oss2.ObjectIteratorV2(bucket, prefix=prefix):
+        try:
+            bucket.delete_object(obj.key)
+            deleted_count += 1
+        except Exception:
+            failed_keys.append(obj.key)
+    return deleted_count, failed_keys

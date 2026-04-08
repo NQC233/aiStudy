@@ -47,6 +47,10 @@
 - [x] Spec 12 第 9 轮补齐页级 `retry_meta` 回写（重试中状态可观测）
 - [x] Spec 12 第 10 轮接入前端重试中提示（展示 attempt/max_retries/eta）
 - [x] Spec 12 第 11 轮在工作区状态卡显示 Slides 重试摘要（无需进入播放页）
+- [x] 优化阶段策略已确认：暂停 Spec 13+ 新功能，优先做已交付能力优化与实验收敛
+- [x] RAG 实验范围已确认：英文语料 + 中文/英文提问（中文论文解析不纳入本轮）
+- [x] RAG 评测协议已冻结：`S0/S1/S2/S3`、3 轮评测、`citation_correct` 严格 `block_id` 命中、`E2E P95<=8s`
+- [x] 已补齐资产删除能力：支持 `DELETE /api/assets/{asset_id}`，并执行数据库级联删除 + OSS 双层清理
 
 ## 3. 当前待确认事项
 
@@ -79,9 +83,12 @@
 - [x] Spec 11B：页面 DSL 生成与分级校验
 - [x] Spec 11C：演示播放页与工作区入口（当前为自研分页渲染）
 
-### 待开始
+### 进行中
 
-- [ ] Spec 12：TTS 与自动翻页（进行中：第 1 轮已完成契约与后端占位编排）
+- [ ] Spec 12：TTS 与自动翻页（进行中：第 11 轮已完成工作区重试摘要，待按页重试详情和演示体验收敛）
+- [ ] Spec 12D：RAG 评测协议与优化闭环（已完成协议冻结、工具链、数据契约校验与 60 题问题集，待执行 S0 三轮）
+
+### 待开始
 
 ### 暂缓到后续阶段
 
@@ -929,6 +936,141 @@
   - 增加“查看重试详情”展开列表（按页显示状态/错误码/预计重试时间）
 - 建议提交信息：
   - `feat: show slides tts retry summary on workspace status panels`
+
+### Spec 12D 交付记录（第 1 轮：RAG 协议冻结）
+
+- 完成内容：
+  - 新增权威 Spec：`docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - 冻结 RAG 实验边界与协议：
+    - 语料范围：英文论文
+    - 提问范围：中文 + 英文
+    - 数据规模：3 篇论文共 60 题（每篇中 10 + 英 10）
+    - 策略矩阵：`S0/S1/S2/S3`
+    - 关键参数：`top_k=5`、`RRF`、`rerank candidate N=20`
+    - 评测轮次：每策略 3 轮
+    - 指标口径：`citation_correct` 严格 `block_id` 命中、人工 `answer_score`、`E2E P95<=8s`
+    - 采纳阈值：`citation_correct +5pp` 或 `answer_score +0.3`，且满足时延门槛
+- 主要新增或修改文件：
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - 文档规范校验：符合 `AGENTS.md` 与 `docs/agent-spec-playbook.md` 的 Spec 驱动要求
+- 当前已知缺口：
+  - 尚未完成 60 题标注一致性复核
+  - 尚未执行 `S0` baseline 三轮
+- 下一轮建议：
+  - 进入 Spec 12D 第 2 轮：完成 `S0` baseline 执行与首版对比模板落地
+- 建议提交信息：
+  - `docs: add spec12d rag evaluation protocol and optimization baseline criteria`
+
+### Spec 12D 交付记录（第 2 轮：Baseline 工具链落地）
+
+- 完成内容：
+  - 新增 `S0` baseline 执行脚本：`backend/tests/rag_eval_s0_runner.py`
+  - 新增 baseline 执行说明：`docs/specs/spec-12d-baseline-execution-guide.md`
+  - 新增问题集模板：`docs/specs/spec-12d-question-dataset-template.jsonl`
+  - 新增样本问题集与 smoke 结果：
+    - `docs/specs/spec-12d-question-dataset.sample.jsonl`
+    - `docs/specs/spec-12d-results-sample/s0_rows.csv`
+    - `docs/specs/spec-12d-results-sample/s0_summary.csv`
+- 主要新增或修改文件：
+  - `backend/tests/rag_eval_s0_runner.py`
+  - `docs/specs/spec-12d-baseline-execution-guide.md`
+  - `docs/specs/spec-12d-question-dataset-template.jsonl`
+  - `docs/specs/spec-12d-question-dataset.sample.jsonl`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `python3 -m py_compile backend/tests/rag_eval_s0_runner.py` 已通过
+  - `python3 backend/tests/rag_eval_s0_runner.py --dataset docs/specs/spec-12d-question-dataset.sample.jsonl --output-dir docs/specs/spec-12d-results-sample --base-url http://localhost:8000 --runs 1 --top-k 5 --strategy S0` 已通过
+- 当前已知缺口：
+  - 正式 60 题数据集尚未落地
+  - `S0` 正式三轮尚未执行
+  - `answer_score` 仍待人工评分回填
+- 下一轮建议：
+  - 进入 Spec 12D 第 3 轮：完成 60 题数据集、执行 `S0` 三轮并输出首版 baseline 报告
+- 建议提交信息：
+  - `feat: add spec12d s0 baseline runner and execution templates`
+
+### Spec 12D 交付记录（第 3 轮：数据契约校验补强）
+
+- 完成内容：
+  - baseline 执行脚本新增数据契约校验：
+    - 总题量校验（默认 60）
+    - 资产数量校验（默认 3）
+    - 每资产题量校验（默认 20）
+    - 每资产中/英题量校验（默认 10/10）
+  - 新增单测文件：`backend/tests/test_rag_eval_s0_runner.py`
+  - 更新执行说明文档，明确校验参数和校验失败行为
+- 主要新增或修改文件：
+  - `backend/tests/rag_eval_s0_runner.py`
+  - `backend/tests/test_rag_eval_s0_runner.py`
+  - `docs/specs/spec-12d-baseline-execution-guide.md`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `python3 -m unittest backend/tests/test_rag_eval_s0_runner.py -v` 已通过（2 tests）
+  - `python3 -m py_compile backend/tests/rag_eval_s0_runner.py` 已通过
+  - baseline 样本 smoke 运行已通过并成功输出 CSV
+- 当前已知缺口：
+  - 正式 60 题数据集仍待落地
+  - 正式 `S0` 三轮仍待执行
+  - 人工 `answer_score` 仍待回填
+- 下一轮建议：
+  - 进入 Spec 12D 第 4 轮：完成正式问题集并执行 `S0` 三轮 baseline
+- 建议提交信息：
+  - `test: add spec12d dataset contract validation for baseline runner`
+
+### Spec 12D 交付记录（第 4 轮：60 题问题集落地）
+
+- 完成内容：
+  - 生成正式问题集：`docs/specs/spec-12d-question-dataset.jsonl`
+  - 数据集满足协议约束：3 资产、每资产 20 题、中英 1:1，共 60 题
+  - 每题补齐 `expected_block_id/page/paragraph` 字段
+- 主要新增或修改文件：
+  - `docs/specs/spec-12d-question-dataset.jsonl`（本地实验数据文件，默认不纳入版本管理）
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - 数据集契约校验通过（60 题 / 3 资产 / 每资产 20 题 / 每资产中英 10:10）
+- 当前已知缺口：
+  - 尚未执行 `S0` 三轮 baseline
+  - 尚未回填人工 `answer_score`
+- 下一轮建议：
+  - 进入 Spec 12D 第 5 轮：执行 `S0` 三轮并输出正式 rows/summary 报表
+- 建议提交信息：
+  - `data: prepare spec12d 60-question bilingual dataset`
+
+### Spec 02 增量交付记录（资产删除能力）
+
+- 完成内容：
+  - 新增删除资产接口：`DELETE /api/assets/{asset_id}`
+  - 删除策略覆盖数据库级联删除与 OSS 双层清理（显式 key + 资产前缀兜底）
+  - 图书馆页新增“删除资产”按钮和二次确认流程
+- 主要新增或修改文件：
+  - `backend/app/api/routes/assets.py`
+  - `backend/app/services/asset_service.py`
+  - `backend/app/services/oss_service.py`
+  - `backend/app/schemas/asset.py`
+  - `backend/app/services/__init__.py`
+  - `backend/tests/test_asset_delete_service.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/pages/library/LibraryPage.vue`
+  - `frontend/src/styles/base.css`
+  - `docs/specs/spec-02-asset-library.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_asset_delete_service.py -v` 已通过（2 tests）
+  - `cd backend && .venv/bin/python -m unittest tests/test_asset_delete_service.py tests/test_rag_eval_s0_runner.py -v` 已通过（4 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `cd frontend && npm run build` 已通过
+  - 手工验证：删除历史 `transformer` 资产成功，接口返回 `deleted=true`
+- 当前已知缺口：
+  - 尚未实现“软删除 + 可恢复”策略
+  - 前端暂未提供批量删除能力
+- 下一轮建议：
+  - 用户补充 Attention 资产并完成解析后，按 Spec 12D 执行 `S0` 三轮 baseline
+- 建议提交信息：
+  - `feat: add asset deletion with cascade cleanup and oss purge`
 
 ## 7. 相关文档
 

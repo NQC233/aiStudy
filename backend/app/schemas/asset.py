@@ -42,3 +42,11 @@ class AssetDetail(BaseModel):
     updated_at: datetime
     basic_resources: BasicResourceStatus
     enhanced_resources: EnhancedResourceStatus
+
+
+class AssetDeleteResponse(BaseModel):
+    asset_id: str
+    deleted: bool
+    deleted_oss_count: int = 0
+    failed_oss_count: int = 0
+    warning: str | None = None

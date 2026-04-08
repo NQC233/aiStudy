@@ -1,5 +1,6 @@
 from app.services.asset_create_service import create_uploaded_asset, validate_pdf_upload
 from app.services.asset_service import (
+    delete_asset,
     get_asset_detail,
     list_assets,
     seed_dev_user_and_assets,
@@ -55,6 +56,7 @@ __all__ = [
     "enqueue_asset_mindmap_rebuild",
     "enqueue_asset_chunk_rebuild",
     "get_asset_detail",
+    "delete_asset",
     "get_asset_mindmap",
     "list_asset_chunks",
     "list_asset_chat_sessions",
