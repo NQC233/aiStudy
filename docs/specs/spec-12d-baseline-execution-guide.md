@@ -31,8 +31,14 @@ python3 backend/tests/rag_eval_s0_runner.py \
   --base-url http://localhost:8000 \
   --runs 3 \
   --top-k 5 \
-  --strategy S0
+  --strategy S0 \
+  --expected-total 60 \
+  --expected-asset-count 3 \
+  --expected-per-asset 20 \
+  --expected-per-language-per-asset 10
 ```
+
+> 说明：执行脚本会先校验数据集契约（总题量、资产数、每资产题量、中英配比），不满足会直接报错。
 
 ## 4. 输出文件
 

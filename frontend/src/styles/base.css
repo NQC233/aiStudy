@@ -339,6 +339,19 @@ select {
   color: var(--accent);
 }
 
+.asset-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.asset-card__action--danger {
+  border-color: rgba(231, 111, 81, 0.35);
+  background: linear-gradient(135deg, rgba(231, 111, 81, 0.18), rgba(231, 111, 81, 0.08));
+  color: #ffb8a7;
+}
+
 .workspace-page {
   align-items: start;
 }

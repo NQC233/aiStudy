@@ -137,3 +137,42 @@
   - `S0` 正式 3 轮 baseline 执行与结果归档
 - 下一轮建议：
   - 进入第 3 轮，先完成正式数据集落地，再执行 `S0` 三轮并填写人工 `answer_score`。
+
+## 实施记录（2026-04-08，第 3 轮：数据契约校验补强）
+
+- 本轮目标：在执行 `S0` 正式三轮前，补齐数据集契约校验，避免 60 题样本出现数量与语言分布偏差。
+- 已完成：
+  - 在 `rag_eval_s0_runner.py` 中新增 `validate_dataset_contract`：
+    - 校验总题量（默认 60）
+    - 校验资产数量（默认 3）
+    - 校验每资产题量（默认 20）
+    - 校验每资产中/英题量（默认 10/10）
+  - 新增契约单测：`backend/tests/test_rag_eval_s0_runner.py`
+  - 更新 baseline 执行说明，明确新增校验参数与失败行为
+- 验证：
+  - `python3 -m unittest backend/tests/test_rag_eval_s0_runner.py -v` 已通过（2 tests）
+  - `python3 -m py_compile backend/tests/rag_eval_s0_runner.py` 已通过
+  - 样本 smoke：执行脚本并产出结果 CSV 已通过
+- 未完成：
+  - 正式 `docs/specs/spec-12d-question-dataset.jsonl`（60 题）
+  - 正式 `S0` 三轮执行与人工 `answer_score` 回填
+- 下一轮建议：
+  - 进入第 4 轮，先落地正式问题集，再执行三轮并沉淀 baseline 报告。
+
+## 实施记录（2026-04-08，第 4 轮：60 题问题集落地）
+
+- 本轮目标：生成正式 `60` 题数据集文件，满足 Spec 12D 评测契约。
+- 已完成：
+  - 生成正式数据集文件：`docs/specs/spec-12d-question-dataset.jsonl`
+  - 数据构成符合协议：
+    - 3 个资产（ResNet / RAG / Mamba）
+    - 每资产 20 题（中文 10 + 英文 10）
+    - 总计 60 题
+  - 每题均包含 `expected_block_id/page/paragraph` 字段
+- 验证：
+  - `python3 - <<'PY' ... validate_dataset_contract(...) ... PY` 已通过（60 题契约校验通过）
+- 未完成：
+  - `S0` 正式三轮执行
+  - 人工 `answer_score` 回填
+- 下一轮建议：
+  - 进入第 5 轮：执行 `S0` 三轮并输出正式 baseline 结果表（rows + summary）。

@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from urllib.parse import unquote, urlparse
+
+from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -5,7 +10,18 @@ from app.core.config import settings
 from app.models.asset import Asset
 from app.models.asset_file import AssetFile
 from app.models.user import User
-from app.schemas.asset import AssetDetail, AssetListItem, BasicResourceStatus, EnhancedResourceStatus
+from app.schemas.asset import (
+    AssetDeleteResponse,
+    AssetDetail,
+    AssetListItem,
+    BasicResourceStatus,
+    EnhancedResourceStatus,
+)
+from app.services.oss_service import (
+    OSSConfigurationError,
+    delete_asset_prefix_objects,
+    delete_objects,
+)
 
 
 def _to_asset_detail(asset: Asset) -> AssetDetail:
@@ -48,6 +64,94 @@ def get_asset_detail(db: Session, asset_id: str) -> AssetDetail | None:
     if asset is None:
         return None
     return _to_asset_detail(asset)
+
+
+def extract_storage_key_from_public_url(public_url: str | None) -> str | None:
+    if not public_url:
+        return None
+    parsed = urlparse(public_url)
+    key = unquote(parsed.path or "").lstrip("/")
+    return key or None
+
+
+def collect_asset_storage_keys(asset: Asset) -> set[str]:
+    keys: set[str] = set()
+
+    for file in asset.files:
+        if file.storage_key:
+            keys.add(file.storage_key.strip().lstrip("/"))
+
+    for parse in asset.document_parses:
+        for candidate in (
+            parse.markdown_storage_key,
+            parse.json_storage_key,
+            parse.raw_response_storage_key,
+        ):
+            if candidate:
+                keys.add(candidate.strip().lstrip("/"))
+
+    for mindmap in asset.mindmaps:
+        if mindmap.storage_key:
+            keys.add(mindmap.storage_key.strip().lstrip("/"))
+
+    presentation = asset.presentation
+    if presentation and isinstance(presentation.tts_manifest, dict):
+        pages = presentation.tts_manifest.get("pages") or []
+        if isinstance(pages, list):
+            for page in pages:
+                if not isinstance(page, dict):
+                    continue
+                audio_key = extract_storage_key_from_public_url(page.get("audio_url"))
+                if audio_key:
+                    keys.add(audio_key)
+
+    keys.discard("")
+    return keys
+
+
+def delete_asset(db: Session, asset_id: str) -> AssetDeleteResponse:
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="未找到对应的学习资产。",
+        )
+
+    storage_keys = sorted(collect_asset_storage_keys(asset))
+    deleted_oss_count = 0
+    failed_oss_keys: list[str] = []
+    warning: str | None = None
+
+    try:
+        deleted_count, failed_keys = delete_objects(storage_keys)
+        deleted_oss_count += deleted_count
+        failed_oss_keys.extend(failed_keys)
+
+        prefix_deleted_count, prefix_failed_keys = delete_asset_prefix_objects(
+            user_id=asset.user_id,
+            asset_id=asset.id,
+        )
+        deleted_oss_count += prefix_deleted_count
+        failed_oss_keys.extend(prefix_failed_keys)
+    except OSSConfigurationError:
+        warning = "OSS 未配置，已删除数据库记录，但未执行对象存储清理。"
+
+    db.delete(asset)
+    db.commit()
+
+    if failed_oss_keys:
+        warning = (
+            "已删除数据库记录，但有部分 OSS 文件删除失败，"
+            f"请检查对象存储权限或网络（失败 {len(set(failed_oss_keys))} 个）。"
+        )
+
+    return AssetDeleteResponse(
+        asset_id=asset_id,
+        deleted=True,
+        deleted_oss_count=deleted_oss_count,
+        failed_oss_count=len(set(failed_oss_keys)),
+        warning=warning,
+    )
 
 
 def seed_dev_user_and_assets(db: Session) -> None:

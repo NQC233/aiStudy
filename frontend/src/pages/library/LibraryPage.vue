@@ -3,7 +3,12 @@ import { onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useRouter } from 'vue-router';
 
-import { fetchAssets, type AssetListItem, type AssetUploadResponse } from '@/api/assets';
+import {
+  deleteAsset,
+  fetchAssets,
+  type AssetListItem,
+  type AssetUploadResponse,
+} from '@/api/assets';
 import AssetCard from '@/components/AssetCard.vue';
 import UploadAssetDialog from '@/components/UploadAssetDialog.vue';
 
@@ -12,6 +17,7 @@ const loading = ref(true);
 const errorMessage = ref('');
 const assets = ref<AssetListItem[]>([]);
 const dialogOpen = ref(false);
+const deletingAssetId = ref<string | null>(null);
 
 async function loadAssets() {
   loading.value = true;
@@ -34,6 +40,29 @@ async function handleUploadSuccess(payload: AssetUploadResponse) {
   dialogOpen.value = false;
   await loadAssets();
   await router.push(`/workspace/${payload.asset.id}`);
+}
+
+async function handleDeleteAsset(asset: AssetListItem) {
+  const confirmed = window.confirm(
+    `确认删除资产《${asset.title}》吗？\n\n该操作会删除该资产的解析结果、知识库、问答、导图、笔记和演示数据。`,
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  deletingAssetId.value = asset.id;
+  errorMessage.value = '';
+  try {
+    const response = await deleteAsset(asset.id);
+    if (response.warning) {
+      window.alert(`资产已删除，但存在清理提示：${response.warning}`);
+    }
+    await loadAssets();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '删除资产失败。';
+  } finally {
+    deletingAssetId.value = null;
+  }
 }
 </script>
 
@@ -91,9 +120,19 @@ async function handleUploadSuccess(payload: AssetUploadResponse) {
 
     <section v-else class="asset-grid">
       <AssetCard v-for="asset in assets" :key="asset.id" :asset="asset">
-        <RouterLink :to="`/workspace/${asset.id}`" class="asset-card__action">
-          进入工作区
-        </RouterLink>
+        <div class="asset-card__actions">
+          <RouterLink :to="`/workspace/${asset.id}`" class="asset-card__action">
+            进入工作区
+          </RouterLink>
+          <button
+            class="asset-card__action asset-card__action--danger"
+            type="button"
+            :disabled="deletingAssetId === asset.id"
+            @click="handleDeleteAsset(asset)"
+          >
+            {{ deletingAssetId === asset.id ? '删除中...' : '删除资产' }}
+          </button>
+        </div>
       </AssetCard>
     </section>
 

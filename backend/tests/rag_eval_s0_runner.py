@@ -5,6 +5,7 @@ import csv
 import json
 import statistics
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,46 @@ def _load_questions(dataset_path: Path) -> list[QuestionItem]:
     if not questions:
         raise ValueError("Dataset is empty")
     return questions
+
+
+def validate_dataset_contract(
+    questions: list[QuestionItem],
+    *,
+    expected_total: int,
+    expected_asset_count: int,
+    expected_per_asset: int,
+    expected_per_language_per_asset: int,
+) -> None:
+    if len(questions) != expected_total:
+        raise ValueError(
+            f"dataset total mismatch: expected {expected_total}, got {len(questions)}"
+        )
+
+    by_asset: Counter[str] = Counter(question.asset_id for question in questions)
+    if len(by_asset) != expected_asset_count:
+        raise ValueError(
+            "asset count mismatch: "
+            f"expected {expected_asset_count}, got {len(by_asset)}"
+        )
+
+    for asset_id, count in sorted(by_asset.items()):
+        if count != expected_per_asset:
+            raise ValueError(
+                f"asset sample mismatch for {asset_id}: "
+                f"expected {expected_per_asset}, got {count}"
+            )
+
+        language_counts: Counter[str] = Counter(
+            question.question_lang for question in questions if question.asset_id == asset_id
+        )
+        if expected_per_language_per_asset > 0:
+            for language in ("zh", "en"):
+                language_count = language_counts.get(language, 0)
+                if language_count != expected_per_language_per_asset:
+                    raise ValueError(
+                        "language balance mismatch for "
+                        f"{asset_id}/{language}: expected {expected_per_language_per_asset}, got {language_count}"
+                    )
 
 
 def _create_chat_session(base_url: str, asset_id: str, run_index: int, strategy: str) -> str:
@@ -185,8 +226,19 @@ def run_s0_baseline(
     runs: int,
     top_k: int,
     strategy: str,
+    expected_total: int,
+    expected_asset_count: int,
+    expected_per_asset: int,
+    expected_per_language_per_asset: int,
 ) -> tuple[Path, Path]:
     questions = _load_questions(dataset_path)
+    validate_dataset_contract(
+        questions,
+        expected_total=expected_total,
+        expected_asset_count=expected_asset_count,
+        expected_per_asset=expected_per_asset,
+        expected_per_language_per_asset=expected_per_language_per_asset,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
 
@@ -297,6 +349,30 @@ def parse_args() -> argparse.Namespace:
         choices=["S0"],
         help="Strategy tag",
     )
+    parser.add_argument(
+        "--expected-total",
+        type=int,
+        default=60,
+        help="Expected total question count",
+    )
+    parser.add_argument(
+        "--expected-asset-count",
+        type=int,
+        default=3,
+        help="Expected asset count",
+    )
+    parser.add_argument(
+        "--expected-per-asset",
+        type=int,
+        default=20,
+        help="Expected questions per asset",
+    )
+    parser.add_argument(
+        "--expected-per-language-per-asset",
+        type=int,
+        default=10,
+        help="Expected zh/en question count per asset",
+    )
     return parser.parse_args()
 
 
@@ -309,6 +385,10 @@ def main() -> None:
         runs=args.runs,
         top_k=args.top_k,
         strategy=args.strategy,
+        expected_total=args.expected_total,
+        expected_asset_count=args.expected_asset_count,
+        expected_per_asset=args.expected_per_asset,
+        expected_per_language_per_asset=args.expected_per_language_per_asset,
     )
     print(f"Rows saved to: {rows_csv}")
     print(f"Summary saved to: {summary_csv}")

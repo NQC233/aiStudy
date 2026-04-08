@@ -31,6 +31,14 @@ export interface AssetDetail {
   };
 }
 
+export interface AssetDeleteResponse {
+  asset_id: string;
+  deleted: boolean;
+  deleted_oss_count: number;
+  failed_oss_count: number;
+  warning: string | null;
+}
+
 export interface AssetPdfDescriptor {
   asset_id: string;
   file_id: string;
@@ -615,6 +623,10 @@ export function fetchAssets(): Promise<AssetListItem[]> {
 
 export function fetchAssetDetail(assetId: string): Promise<AssetDetail> {
   return requestJson<AssetDetail>(`/api/assets/${assetId}`);
+}
+
+export function deleteAsset(assetId: string): Promise<AssetDeleteResponse> {
+  return deleteJson<AssetDeleteResponse>(`/api/assets/${assetId}`);
 }
 
 
