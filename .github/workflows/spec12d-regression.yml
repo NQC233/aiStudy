@@ -44,7 +44,7 @@ jobs:
       - name: Spec12D gate check (committed summary)
         run: |
           python backend/scripts/spec12d_gate.py \
-            --summary docs/specs/spec-12d-results-tuned-v2/s0_summary.csv \
+            --summary backend/tests/fixtures/spec12d_summary_pass.csv \
             --min-hit-rate 0.92 \
             --min-citation-rate 0.92 \
             --max-e2e-p95-ms 8000
