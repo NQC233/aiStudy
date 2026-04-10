@@ -334,6 +334,8 @@ export interface ChatSessionMessageRequest {
     selector_payload?: Record<string, unknown>;
   };
   top_k?: number;
+  rewrite_query?: boolean;
+  strategy?: 's0' | 's1' | 's2' | 's3';
 }
 
 export interface ChatSessionMessageResponse {

@@ -39,6 +39,8 @@ class AssetChunkRebuildResponse(BaseModel):
 class AssetRetrievalSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     top_k: int = Field(default=5, ge=1, le=20)
+    rewrite_query: bool = False
+    strategy: str = Field(default="s0", pattern="^(s0|s1|s2|s3)$")
 
 
 class RetrievalSearchHit(BaseModel):

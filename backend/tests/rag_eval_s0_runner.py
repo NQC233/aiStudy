@@ -230,6 +230,8 @@ def run_s0_baseline(
     expected_asset_count: int,
     expected_per_asset: int,
     expected_per_language_per_asset: int,
+    checkpoint_every: int,
+    single_turn: bool,
 ) -> tuple[Path, Path]:
     questions = _load_questions(dataset_path)
     validate_dataset_contract(
@@ -241,20 +243,32 @@ def run_s0_baseline(
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
+    total_questions = len(questions) * runs
+    processed = 0
+    started_at = time.perf_counter()
 
     session_by_run_and_asset: dict[tuple[int, str], str] = {}
 
     for run_index in range(1, runs + 1):
         for question in questions:
             session_key = (run_index, question.asset_id)
-            if session_key not in session_by_run_and_asset:
+            if single_turn:
+                session_id = _create_chat_session(
+                    base_url=base_url,
+                    asset_id=question.asset_id,
+                    run_index=run_index,
+                    strategy=strategy,
+                )
+            elif session_key not in session_by_run_and_asset:
                 session_by_run_and_asset[session_key] = _create_chat_session(
                     base_url=base_url,
                     asset_id=question.asset_id,
                     run_index=run_index,
                     strategy=strategy,
                 )
-            session_id = session_by_run_and_asset[session_key]
+                session_id = session_by_run_and_asset[session_key]
+            else:
+                session_id = session_by_run_and_asset[session_key]
 
             row: dict[str, Any] = {
                 "strategy": strategy,
@@ -278,10 +292,19 @@ def run_s0_baseline(
 
             try:
                 retrieval_start = time.perf_counter()
+                strategy_key = strategy.upper()
+                rewrite_query = strategy_key == "S1"
+                strategy_payload = strategy.lower()
+
                 retrieval = _request_json(
                     "POST",
                     f"{base_url}/api/assets/{question.asset_id}/retrieval/search",
-                    payload={"query": question.question, "top_k": top_k},
+                    payload={
+                        "query": question.question,
+                        "top_k": top_k,
+                        "rewrite_query": rewrite_query,
+                        "strategy": strategy_payload,
+                    },
                 )
                 row["retrieval_ms"] = round((time.perf_counter() - retrieval_start) * 1000, 2)
                 retrieval_results = retrieval.get("results") or []
@@ -294,7 +317,12 @@ def run_s0_baseline(
                 chat = _request_json(
                     "POST",
                     f"{base_url}/api/chat/sessions/{session_id}/messages",
-                    payload={"question": question.question, "top_k": top_k},
+                    payload={
+                        "question": question.question,
+                        "top_k": top_k,
+                        "rewrite_query": rewrite_query,
+                        "strategy": strategy_payload,
+                    },
                 )
                 row["e2e_ms"] = round((time.perf_counter() - e2e_start) * 1000, 2)
                 row["answer"] = chat.get("answer", "")
@@ -306,6 +334,23 @@ def run_s0_baseline(
                 row["error_message"] = str(exc)
 
             rows.append(row)
+            processed += 1
+
+            if checkpoint_every > 0 and (processed % checkpoint_every == 0 or processed == total_questions):
+                rows_csv = output_dir / f"{strategy.lower()}_rows.csv"
+                summary_csv = output_dir / f"{strategy.lower()}_summary.csv"
+                _write_rows_csv(rows_csv, rows)
+                _write_summary_csv(summary_csv, rows)
+
+                elapsed = time.perf_counter() - started_at
+                avg = elapsed / processed if processed else 0.0
+                eta = avg * (total_questions - processed)
+                print(
+                    "[progress] "
+                    f"{processed}/{total_questions} "
+                    f"elapsed={elapsed:.1f}s "
+                    f"eta={eta:.1f}s"
+                )
 
     rows_csv = output_dir / f"{strategy.lower()}_rows.csv"
     summary_csv = output_dir / f"{strategy.lower()}_summary.csv"
@@ -346,7 +391,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="S0",
-        choices=["S0"],
+        choices=["S0", "S1", "S2", "S3"],
         help="Strategy tag",
     )
     parser.add_argument(
@@ -373,6 +418,17 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Expected zh/en question count per asset",
     )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=10,
+        help="Write progress every N questions (0 to disable)",
+    )
+    parser.add_argument(
+        "--single-turn",
+        action="store_true",
+        help="Create a fresh chat session for each question",
+    )
     return parser.parse_args()
 
 
@@ -389,6 +445,8 @@ def main() -> None:
         expected_asset_count=args.expected_asset_count,
         expected_per_asset=args.expected_per_asset,
         expected_per_language_per_asset=args.expected_per_language_per_asset,
+        checkpoint_every=args.checkpoint_every,
+        single_turn=args.single_turn,
     )
     print(f"Rows saved to: {rows_csv}")
     print(f"Summary saved to: {summary_csv}")
