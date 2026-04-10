@@ -10,6 +10,7 @@ from app.models.asset import Asset
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.citation import Citation
+from app.core.config import settings
 from app.schemas.chat import (
     ChatMessageCitationItem,
     ChatMessageCreateRequest,
@@ -142,7 +143,7 @@ def _build_history_messages(
     db: Session,
     session_id: str,
     exclude_message_id: str,
-    limit: int = 8,
+    limit: int = 4,
 ) -> list[dict[str, str]]:
     statement = (
         select(ChatMessage)
@@ -197,7 +198,14 @@ def create_chat_session_message(
     db.commit()
     db.refresh(question_message)
 
-    retrieval = search_asset_chunks(db, asset.id, question, payload.top_k)
+    retrieval = search_asset_chunks(
+        db,
+        asset.id,
+        question,
+        payload.top_k,
+        rewrite_query=payload.rewrite_query,
+        strategy=payload.strategy,
+    )
     retrieval_hits = retrieval.results
 
     if retrieval_hits:
@@ -210,7 +218,7 @@ def create_chat_session_message(
                     db,
                     session_id=chat_session.id,
                     exclude_message_id=question_message.id,
-                    limit=8,
+                    limit=max(0, settings.qa_history_max_messages),
                 ),
             )
         except (LLMConfigurationError, LLMRequestError) as exc:

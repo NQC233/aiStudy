@@ -68,6 +68,8 @@ class ChatMessageCreateRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     selected_anchor: SelectedAnchorPayload | None = None
     top_k: int = Field(default=6, ge=1, le=20)
+    rewrite_query: bool = False
+    strategy: str = Field(default="s0", pattern="^(s0|s1|s2|s3)$")
 
 
 class ChatMessageCreateResponse(BaseModel):

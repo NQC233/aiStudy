@@ -364,7 +364,12 @@ def search_asset_retrieval_endpoint(
 ) -> AssetRetrievalSearchResponse:
     """返回单资产范围内可直接回跳的检索结果。"""
     return search_asset_chunks(
-        db, asset_id=asset_id, query=payload.query, top_k=payload.top_k
+        db,
+        asset_id=asset_id,
+        query=payload.query,
+        top_k=payload.top_k,
+        rewrite_query=payload.rewrite_query,
+        strategy=payload.strategy,
     )
 
 

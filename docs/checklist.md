@@ -86,7 +86,7 @@
 ### 进行中
 
 - [ ] Spec 12：TTS 与自动翻页（进行中：第 11 轮已完成工作区重试摘要，待按页重试详情和演示体验收敛）
-- [ ] Spec 12D：RAG 评测协议与优化闭环（已完成协议冻结、工具链、数据契约校验与 60 题问题集，待执行 S0 三轮）
+- [ ] Spec 12D：RAG 评测协议与优化闭环（已锁定 S0(single-turn) 并完成 P95 收敛，待工程收尾）
 
 ### 待开始
 
@@ -1040,6 +1040,172 @@
   - 进入 Spec 12D 第 5 轮：执行 `S0` 三轮并输出正式 rows/summary 报表
 - 建议提交信息：
   - `data: prepare spec12d 60-question bilingual dataset`
+
+### Spec 12D 交付记录（第 5 轮：扩展到 4 资产 80 题）
+
+- 完成内容：
+  - 将正式问题集扩展到 4 资产：ResNet / RAG / Mamba / Attention
+  - 数据规模升级为 80 题（每资产 20 题，中英各 10）
+  - 执行指南参数同步：`expected_total=80`、`expected_asset_count=4`
+- 主要新增或修改文件：
+  - `docs/specs/spec-12d-question-dataset.jsonl`
+  - `docs/specs/spec-12d-baseline-execution-guide.md`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - 数据集契约校验通过（80 题 / 4 资产 / 每资产 20 题 / 每资产中英 10:10）
+- 当前已知缺口：
+  - 尚未执行 `S0` 三轮
+  - 尚未回填人工 `answer_score`
+- 下一轮建议：
+  - 进入 Spec 12D 第 6 轮：执行 `S0` 三轮并输出正式 baseline rows/summary
+- 建议提交信息：
+  - `data: expand spec12d dataset to 80 bilingual questions across 4 assets`
+
+### Spec 12D 交付记录（第 6 轮：S0/S1 对比执行）
+
+- 完成内容：
+  - 完成 `S0` 三轮（80题*3）基线运行并输出报表
+  - 实现并接入 `S1` 查询重写开关（retrieval/chat/runner）
+  - 完成 `S1` 三轮（80题*3）运行并输出报表
+- 主要新增或修改文件：
+  - `backend/app/services/query_rewrite_service.py`
+  - `backend/app/services/llm_service.py`
+  - `backend/app/services/retrieval_service.py`
+  - `backend/app/services/chat_service.py`
+  - `backend/app/schemas/document_chunk.py`
+  - `backend/app/schemas/chat.py`
+  - `backend/tests/test_query_rewrite_service.py`
+  - `backend/tests/rag_eval_s0_runner.py`
+  - `frontend/src/api/assets.ts`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/specs/spec-12d-results/s0_summary.csv`
+  - `docs/specs/spec-12d-results/s1_summary.csv`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_query_rewrite_service.py tests/test_rag_eval_s0_runner.py -v` 已通过（6 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `cd frontend && npm run build` 已通过
+- 结果结论：
+  - S1 相比 S0 质量仅小幅提升（+0.42pp），但整体 E2E P95 明显上升（约 +4.3s）
+  - 当前阶段不建议将 S1 作为最终策略
+- 下一轮建议：
+  - 进入 Spec 12D 第 7 轮：实现 S2（BM25+向量RRF）并先做小样本门禁再全量三轮
+- 建议提交信息：
+  - `feat: add s1 retrieval query rewrite and run 80x3 comparison`
+
+### Spec 12D 交付记录（第 7 轮：S2 门禁实验）
+
+- 完成内容：
+  - 实现 S2（BM25 + 向量 RRF）检索策略
+  - `retrieval/search` 与 `chat/messages` 支持 `strategy=s0|s1|s2`
+  - runner 支持 `--strategy S2`
+  - 完成 S2 门禁运行（80题*1轮）
+- 主要新增或修改文件：
+  - `backend/app/services/retrieval_service.py`
+  - `backend/app/schemas/document_chunk.py`
+  - `backend/app/schemas/chat.py`
+  - `backend/app/services/chat_service.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/tests/test_retrieval_hybrid_rrf.py`
+  - `backend/tests/rag_eval_s0_runner.py`
+  - `frontend/src/api/assets.ts`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/specs/spec-12d-results/s2_summary.csv`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_retrieval_hybrid_rrf.py tests/test_query_rewrite_service.py tests/test_rag_eval_s0_runner.py -v` 已通过（8 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `cd frontend && npm run build` 已通过
+  - `S2` 门禁运行（80题*1轮）已完成
+- 结果结论：
+  - `S2` 相比 `S0` 质量未提升（hit/citation 均为 0.925），但时延显著升高（run1 en P95≈19.2s）
+  - 当前不建议扩展到 S2 三轮全量
+- 下一轮建议：
+  - 优先评估 `S3` 小样本门禁；若仍无明显收益，转入 S0 性能优化路线
+- 建议提交信息：
+  - `feat: add s2 hybrid rrf retrieval and run gate benchmark`
+
+### Spec 12D 交付记录（第 8 轮：S0 性能压缩试验）
+
+- 完成内容：
+  - 增加问答上下文压缩配置：`qa_context_max_hits` / `qa_context_chars_per_hit` / `qa_history_max_messages`
+  - runner 新增 `--single-turn` 实验模式（每题新会话）
+  - 完成 S0 single-turn 门禁运行（80题*1轮）
+- 主要新增或修改文件：
+  - `backend/app/core/config.py`
+  - `backend/app/services/llm_service.py`
+  - `backend/app/services/chat_service.py`
+  - `backend/tests/test_llm_prompt_compaction.py`
+  - `backend/tests/rag_eval_s0_runner.py`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/specs/spec-12d-results/s0_summary.csv`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_llm_prompt_compaction.py tests/test_query_rewrite_service.py tests/test_retrieval_hybrid_rrf.py tests/test_rag_eval_s0_runner.py -v` 已通过（10 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `cd frontend && npm run build` 已通过
+  - S0 single-turn 门禁完成（run1: en P95≈11.1s, zh P95≈11.2s）
+- 结果结论：
+  - 性能优化有效（相较此前门禁 P95 明显下降），但仍未达到 `<=8s` 目标
+- 下一轮建议：
+  - 先统一实验模式为 single-turn，再决定继续 S3 门禁或继续做性能压缩
+- 建议提交信息：
+  - `perf: compact qa prompt context and add single-turn benchmark mode`
+
+### Spec 12D 交付记录（第 9 轮：S3 门禁实验）
+
+- 完成内容：
+  - 实现 S3（S2 + rerank）策略，并完成 80题*1轮 single-turn 门禁
+  - 请求协议支持 `strategy=s3`
+- 主要新增或修改文件：
+  - `backend/app/services/retrieval_service.py`
+  - `backend/app/schemas/document_chunk.py`
+  - `backend/app/schemas/chat.py`
+  - `backend/tests/test_retrieval_hybrid_rrf.py`
+  - `backend/tests/rag_eval_s0_runner.py`
+  - `frontend/src/api/assets.ts`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/specs/spec-12d-results/s3_summary.csv`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_retrieval_hybrid_rrf.py tests/test_llm_prompt_compaction.py tests/test_query_rewrite_service.py tests/test_rag_eval_s0_runner.py -v` 已通过（12 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `cd frontend && npm run build` 已通过
+  - S3 门禁运行完成（80题*1轮，single-turn）
+- 结果结论：
+  - S3 在中文样本上质量提升明显（hit/citation 到 1.0），但 E2E P95 明显升高到约 15.6s
+  - 目前仍不满足 `<=8s` 门槛
+- 下一轮建议：
+  - 锁定 S0(single-turn) 作为当前交付策略，并进入 P95 性能专项优化
+- 建议提交信息：
+  - `feat: add s3 rerank gate benchmark and strategy support`
+
+### Spec 12D 交付记录（第 10 轮：S0 P95 性能收敛）
+
+- 完成内容：
+  - S0 问答链路进一步压缩（上下文、历史、输出 token）
+  - 固化实验模式：`single-turn + top_k=5`
+  - 完成 tuned-v2 门禁运行（80题*1轮）
+- 主要新增或修改文件：
+  - `backend/app/core/config.py`
+  - `backend/app/services/llm_service.py`
+  - `backend/tests/test_llm_prompt_compaction.py`
+  - `docs/specs/spec-12d-baseline-execution-guide.md`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/specs/spec-12d-results-tuned-v2/s0_summary.csv`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_llm_prompt_compaction.py tests/test_retrieval_hybrid_rrf.py tests/test_query_rewrite_service.py tests/test_rag_eval_s0_runner.py -v` 已通过（12 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `S0` tuned-v2 门禁结果：
+    - en `E2E P95=7683ms`
+    - zh `E2E P95=6512ms`
+    - 质量指标保持 `hit/citation=0.925`
+- 结果结论：
+  - 在质量不变前提下，双语 P95 均降至 8s 门槛以内，满足当前阶段目标
+- 下一轮建议：
+  - 进入工程收尾：回归脚本固化、CI 接入、结果报表自动归档
+- 建议提交信息：
+  - `perf: tune s0 single-turn qa path to meet p95 target`
 
 ### Spec 02 增量交付记录（资产删除能力）
 

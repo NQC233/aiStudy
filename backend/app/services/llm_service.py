@@ -40,7 +40,9 @@ def _clip_text(text: str, limit: int = 1200) -> str:
 
 def _build_context_lines(retrieval_hits: Sequence[RetrievalSearchHit]) -> str:
     lines: list[str] = []
-    for index, hit in enumerate(retrieval_hits, start=1):
+    max_hits = max(1, settings.qa_context_max_hits)
+    max_chars = max(200, settings.qa_context_chars_per_hit)
+    for index, hit in enumerate(retrieval_hits[:max_hits], start=1):
         section_label = (
             " / ".join(hit.section_path) if hit.section_path else "未标注章节"
         )
@@ -56,7 +58,7 @@ def _build_context_lines(retrieval_hits: Sequence[RetrievalSearchHit]) -> str:
                 [
                     f"[{index}] chunk_id={hit.chunk_id} score={hit.score:.4f} pages={page_label}",
                     f"section={section_label}",
-                    f"text={_clip_text(hit.text, limit=1200)}",
+                    f"text={_clip_text(hit.text, limit=max_chars)}",
                 ]
             )
         )
@@ -127,7 +129,7 @@ def generate_qa_answer(
         f"{anchor_block}\n\n"
         "【检索证据】\n"
         f"{context_block if context_block else '无可用证据'}\n\n"
-        "请输出简洁中文回答。若检索证据不足，直接说明证据不足，并给出下一步建议。"
+        "请输出简洁中文回答（不超过80字）。若检索证据不足，直接说明证据不足，并给出下一步建议。"
     )
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
@@ -143,6 +145,7 @@ def generate_qa_answer(
         "model": model_name,
         "messages": messages,
         "temperature": 0.2,
+        "max_tokens": settings.qa_answer_max_tokens,
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = Request(
@@ -176,6 +179,62 @@ def generate_qa_answer(
     message_content = _extract_message_content(response_json)
     if not message_content:
         raise LLMRequestError("模型响应缺少可用内容。")
+    return message_content
+
+
+def generate_retrieval_query_rewrite(query: str) -> str:
+    """将中文问题重写为英文检索表达，便于向量检索召回。"""
+    api_key, base_url, model_name = _ensure_chat_configuration()
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You rewrite Chinese academic questions into concise English retrieval queries. "
+                    "Output plain text only. Keep key technical terms. No explanations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": query.strip(),
+            },
+        ],
+        "temperature": 0.0,
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = Request(
+        url=base_url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=settings.dashscope_chat_timeout_sec) as response:
+            raw_body = response.read()
+    except HTTPError as exc:
+        raw_error = exc.read().decode("utf-8", errors="ignore")
+        raise LLMRequestError(f"查询重写失败：HTTP {exc.code} {raw_error}") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise LLMRequestError("查询重写超时，请稍后重试。") from exc
+    except URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            raise LLMRequestError("查询重写超时，请稍后重试。") from exc
+        raise LLMRequestError("查询重写服务不可达，请检查网络或配置。") from exc
+
+    try:
+        response_json = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LLMRequestError("查询重写响应不是合法 JSON。") from exc
+
+    message_content = _extract_message_content(response_json)
+    if not message_content:
+        raise LLMRequestError("查询重写响应缺少可用内容。")
     return message_content
 
 

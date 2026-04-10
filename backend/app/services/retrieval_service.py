@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import socket
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
@@ -30,8 +31,55 @@ from app.services.embedding_service import (
     EmbeddingRequestError,
     embed_texts,
 )
+from app.services.query_rewrite_service import prepare_retrieval_query
 
 logger = logging.getLogger(__name__)
+
+
+def merge_rrf_scores(
+    *,
+    vector_ids: list[str],
+    keyword_ids: list[str],
+    rrf_k: int = 60,
+) -> list[str]:
+    scores: dict[str, float] = {}
+
+    for rank, chunk_id in enumerate(vector_ids, start=1):
+        scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank)
+
+    for rank, chunk_id in enumerate(keyword_ids, start=1):
+        scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank)
+
+    return [
+        chunk_id
+        for chunk_id, _ in sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+
+def _tokenize_for_rerank(text: str) -> set[str]:
+    return {token for token in re.findall(r"[a-zA-Z0-9]+", text.lower()) if token}
+
+
+def rerank_candidates(
+    *,
+    query: str,
+    candidates: list[dict[str, str | float]],
+    top_n: int,
+) -> list[dict[str, str | float]]:
+    query_tokens = _tokenize_for_rerank(query)
+    if not query_tokens:
+        return candidates[:top_n]
+
+    scored: list[tuple[float, dict[str, str | float]]] = []
+    for candidate in candidates:
+        text = str(candidate.get("text", ""))
+        base_score = float(candidate.get("base_score", 0.0))
+        overlap = len(query_tokens.intersection(_tokenize_for_rerank(text))) / len(query_tokens)
+        score = 0.8 * overlap + 0.2 * base_score
+        scored.append((score, candidate))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [item[1] for item in scored[:top_n]]
 
 
 def _require_asset(db: Session, asset_id: str) -> Asset:
@@ -246,6 +294,8 @@ def search_asset_chunks(
     asset_id: str,
     query: str,
     top_k: int,
+    rewrite_query: bool = False,
+    strategy: str = "s0",
 ) -> AssetRetrievalSearchResponse:
     _require_asset(db, asset_id)
     normalized_query = query.strip()
@@ -254,8 +304,15 @@ def search_asset_chunks(
             status_code=status.HTTP_400_BAD_REQUEST, detail="query 不能为空。"
         )
 
+    normalized_strategy = strategy.strip().lower() if strategy else "s0"
+    effective_rewrite = rewrite_query or normalized_strategy == "s1"
+    retrieval_query = prepare_retrieval_query(
+        query=normalized_query,
+        rewrite_query=effective_rewrite,
+    )
+
     try:
-        query_embeddings = embed_texts([normalized_query], text_type="query")
+        query_embeddings = embed_texts([retrieval_query], text_type="query")
     except (EmbeddingConfigurationError, EmbeddingRequestError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -264,14 +321,15 @@ def search_asset_chunks(
 
     if not query_embeddings:
         return AssetRetrievalSearchResponse(
-            asset_id=asset_id, query=normalized_query, top_k=top_k, results=[]
+            asset_id=asset_id, query=retrieval_query, top_k=top_k, results=[]
         )
     query_embedding = query_embeddings[0]
 
     distance = DocumentChunk.embedding.cosine_distance(query_embedding).label(
         "distance"
     )
-    statement = (
+    is_hybrid = normalized_strategy in {"s2", "s3"}
+    vector_statement = (
         select(DocumentChunk, distance)
         .where(
             DocumentChunk.asset_id == asset_id,
@@ -279,9 +337,65 @@ def search_asset_chunks(
             DocumentChunk.embedding.is_not(None),
         )
         .order_by(distance.asc())
-        .limit(top_k)
+        .limit(top_k if not is_hybrid else top_k * 4)
     )
-    rows = db.execute(statement).all()
+    vector_rows = db.execute(vector_statement).all()
+
+    rows = vector_rows
+    if is_hybrid:
+        ts_query = func.plainto_tsquery("english", retrieval_query)
+        keyword_rank = func.ts_rank_cd(
+            func.to_tsvector("english", DocumentChunk.text_content),
+            ts_query,
+        ).label("keyword_rank")
+        keyword_statement = (
+            select(DocumentChunk, keyword_rank)
+            .where(
+                DocumentChunk.asset_id == asset_id,
+                DocumentChunk.embedding_status == "ready",
+                DocumentChunk.embedding.is_not(None),
+                keyword_rank > 0,
+            )
+            .order_by(keyword_rank.desc())
+            .limit(top_k * 4)
+        )
+        keyword_rows = db.execute(keyword_statement).all()
+
+        vector_ids = [chunk.id for chunk, _ in vector_rows]
+        keyword_ids = [chunk.id for chunk, _ in keyword_rows]
+        merged_ids = merge_rrf_scores(vector_ids=vector_ids, keyword_ids=keyword_ids)
+
+        chunk_by_id: dict[str, tuple[DocumentChunk, float]] = {}
+        for chunk, chunk_distance in vector_rows:
+            distance_value = float(chunk_distance) if chunk_distance is not None else 1.0
+            chunk_by_id[chunk.id] = (chunk, distance_value)
+        for chunk, _ in keyword_rows:
+            if chunk.id not in chunk_by_id:
+                chunk_by_id[chunk.id] = (chunk, 1.0)
+
+        candidate_rows = [
+            chunk_by_id[chunk_id] for chunk_id in merged_ids[: top_k * 4] if chunk_id in chunk_by_id
+        ]
+        if normalized_strategy == "s3":
+            rerank_input = [
+                {
+                    "chunk_id": chunk.id,
+                    "text": chunk.text_content,
+                    "base_score": max(0.0, 1.0 - distance_value),
+                }
+                for chunk, distance_value in candidate_rows
+            ]
+            reranked = rerank_candidates(
+                query=retrieval_query,
+                candidates=rerank_input,
+                top_n=top_k,
+            )
+            ordered_ids = [str(item["chunk_id"]) for item in reranked]
+            rows = [chunk_by_id[chunk_id] for chunk_id in ordered_ids if chunk_id in chunk_by_id]
+        else:
+            rows = candidate_rows[:top_k]
+    else:
+        rows = vector_rows
 
     results: list[RetrievalSearchHit] = []
     for chunk, chunk_distance in rows:
@@ -305,5 +419,5 @@ def search_asset_chunks(
         )
 
     return AssetRetrievalSearchResponse(
-        asset_id=asset_id, query=normalized_query, top_k=top_k, results=results
+        asset_id=asset_id, query=retrieval_query, top_k=top_k, results=results
     )
