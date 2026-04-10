@@ -86,7 +86,7 @@
 ### 进行中
 
 - [ ] Spec 12：TTS 与自动翻页（进行中：第 11 轮已完成工作区重试摘要，待按页重试详情和演示体验收敛）
-- [ ] Spec 12D：RAG 评测协议与优化闭环（已锁定 S0(single-turn) 并完成 P95 收敛，待工程收尾）
+- [x] Spec 12D：RAG 评测协议与优化闭环（已锁定 S0(single-turn)、完成 P95 收敛并通过最终回归门禁）
 
 ### 待开始
 
@@ -1206,6 +1206,59 @@
   - 进入工程收尾：回归脚本固化、CI 接入、结果报表自动归档
 - 建议提交信息：
   - `perf: tune s0 single-turn qa path to meet p95 target`
+
+### Spec 12D 交付记录（第 11 轮：门禁脚本与 CI 接入）
+
+- 完成内容：
+  - 新增 Spec12D 门禁核心：`backend/app/core/spec12d_benchmark.py`
+  - 新增门禁脚本：`backend/scripts/spec12d_gate.py`
+  - 新增门禁单测：`backend/tests/test_spec12d_benchmark_service.py`
+  - 新增 CI 工作流：`.github/workflows/spec12d-regression.yml`
+    - 后端 Spec12D 相关测试
+    - 后端 compile 检查
+    - 已提交 summary 的门禁阈值校验
+    - 前端 build 检查
+  - baseline 指南补充 `--single-turn` 默认建议
+- 主要新增或修改文件：
+  - `backend/app/core/spec12d_benchmark.py`
+  - `backend/scripts/spec12d_gate.py`
+  - `backend/tests/test_spec12d_benchmark_service.py`
+  - `.github/workflows/spec12d-regression.yml`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/specs/spec-12d-baseline-execution-guide.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `python backend/scripts/spec12d_gate.py --summary docs/specs/spec-12d-results-tuned-v2/s0_summary.csv --min-hit-rate 0.92 --min-citation-rate 0.92 --max-e2e-p95-ms 8000` 已通过
+  - `cd backend && .venv/bin/python -m unittest tests/test_spec12d_benchmark_service.py tests/test_llm_prompt_compaction.py tests/test_retrieval_hybrid_rrf.py tests/test_query_rewrite_service.py tests/test_rag_eval_s0_runner.py -v` 已通过（14 tests）
+- 当前已知缺口：
+  - CI 当前校验的是已提交 summary 文件，不直接在线跑耗时 benchmark
+- 下一轮建议：
+  - 进入最终回归封版：跑一次 `S0(single-turn, 80题*3轮)` 并归档最终报表
+- 建议提交信息：
+  - `ci: add spec12d benchmark gate workflow and regression checker`
+
+### Spec 12D 交付记录（第 12 轮：最终回归封版）
+
+- 完成内容：
+  - 最终参数收敛：`qa_answer_max_tokens=70`，回答长度提示不超过 60 字
+  - 完成 `S0(single-turn, top_k=5, 80题*3轮)` 最终回归
+  - 使用门禁脚本对最终 summary 执行阈值校验并通过
+- 主要新增或修改文件：
+  - `backend/app/core/config.py`
+  - `backend/app/services/llm_service.py`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/specs/spec-12d-results-final-v2/s0_summary.csv`
+  - `docs/checklist.md`
+- 验证结果：
+  - `python backend/scripts/spec12d_gate.py --summary docs/specs/spec-12d-results-final-v2/s0_summary.csv --min-hit-rate 0.92 --min-citation-rate 0.92 --max-e2e-p95-ms 8000` 已通过
+  - 最终 3 轮 max `E2E P95=7874ms`，满足 8s 门槛
+  - 质量指标保持 `hit/citation=0.925`
+- 当前已知缺口：
+  - 线上波动仍可能受外部 LLM 服务负载影响，建议保留门禁脚本做周期回归
+- 下一轮建议：
+  - 进入 PR 收尾：汇总变更、风险说明与后续可选优化项
+- 建议提交信息：
+  - `perf: finalize spec12d s0 tuning and pass final benchmark gate`
 
 ### Spec 02 增量交付记录（资产删除能力）
 

@@ -129,7 +129,7 @@ def generate_qa_answer(
         f"{anchor_block}\n\n"
         "【检索证据】\n"
         f"{context_block if context_block else '无可用证据'}\n\n"
-        "请输出简洁中文回答（不超过80字）。若检索证据不足，直接说明证据不足，并给出下一步建议。"
+        "请输出简洁中文回答（不超过60字）。若检索证据不足，直接说明证据不足，并给出下一步建议。"
     )
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
