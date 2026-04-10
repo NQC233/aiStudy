@@ -329,3 +329,17 @@
   - `python backend/scripts/spec12d_gate.py --summary backend/tests/fixtures/spec12d_summary_pass.csv --min-hit-rate 0.92 --min-citation-rate 0.92 --max-e2e-p95-ms 8000` 已通过
 - 结果：
   - CI 门禁步骤不再依赖被忽略目录，合并后可稳定执行。
+
+## 实施记录（2026-04-10，第 14 轮：一键回归脚本与归档模板）
+
+- 本轮目标：沉淀“可复用回归命令 + 标准结果模板”，减少手工操作和口径漂移。
+- 已完成：
+  - 新增一键回归脚本：`scripts/run_spec12d_regression.sh`
+    - `quick`：后端测试 + 编译 + 前端构建 + 门禁校验（fixture）
+    - `full`：在 quick 基础上执行 `S0 80题*3轮` 并做门禁校验
+  - 新增结果归档模板：`docs/specs/spec-12d-regression-report-template.md`
+- 验证：
+  - `bash -n scripts/run_spec12d_regression.sh` 通过
+  - `./scripts/run_spec12d_regression.sh quick` 可用于本地快速回归
+- 下一轮建议：
+  - 在每次关键提交后用 `quick` 回归，合并前至少跑一次 `full`。

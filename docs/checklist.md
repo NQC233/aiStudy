@@ -1280,6 +1280,29 @@
 - 建议提交信息：
   - `fix: use committed fixture for spec12d ci gate summary`
 
+### Spec 12D 交付记录（第 14 轮：一键回归脚本与归档模板）
+
+- 完成内容：
+  - 新增一键回归脚本：`scripts/run_spec12d_regression.sh`
+    - `quick`：后端测试/编译 + 前端构建 + 门禁校验
+    - `full`：在 `quick` 基础上执行 `S0 80题*3轮` 与门禁
+  - 新增结果归档模板：`docs/specs/spec-12d-regression-report-template.md`
+  - 修复脚本执行目录问题，确保读取 `backend/.env` 并稳定运行
+- 主要新增或修改文件：
+  - `scripts/run_spec12d_regression.sh`
+  - `docs/specs/spec-12d-regression-report-template.md`
+  - `docs/specs/spec-12d-rag-evaluation-and-optimization.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `bash -n scripts/run_spec12d_regression.sh` 已通过
+  - `./scripts/run_spec12d_regression.sh quick` 已通过
+- 当前已知缺口：
+  - `full` 模式耗时较长，建议在关键节点或发布前执行
+- 下一轮建议：
+  - 使用模板沉淀一次正式回归记录并归档到 Spec12D 目录
+- 建议提交信息：
+  - `chore: add one-command spec12d regression script and report template`
+
 ### Spec 02 增量交付记录（资产删除能力）
 
 - 完成内容：
