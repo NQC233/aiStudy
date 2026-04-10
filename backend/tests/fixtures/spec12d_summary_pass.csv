@@ -1,0 +1,3 @@
+strategy,run_index,question_lang,sample_count,retrieval_hit_rate,citation_correct_rate,e2e_p50_ms,e2e_p95_ms,retrieval_p50_ms,retrieval_p95_ms,error_count
+S0,1,en,40,0.925,0.925,3773.60,7682.94,422.90,773.87,0
+S0,1,zh,40,0.925,0.925,4438.76,6511.70,406.96,707.65,0
