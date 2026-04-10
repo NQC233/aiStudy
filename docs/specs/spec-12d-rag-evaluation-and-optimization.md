@@ -281,3 +281,39 @@
   - 当前阶段目标达成，可将 `S0(single-turn)` 作为交付默认策略。
 - 下一轮建议：
   - 将 tuned-v2 参数固定为默认实验与演示参数，进入工程收尾（CI、报告自动化、回归脚本）。
+
+## 实施记录（2026-04-09，第 11 轮：基准门禁脚本与 CI）
+
+- 本轮目标：把 Spec12D 的结果判定从“人工阅读 CSV”升级为“可执行门禁 + CI 自动校验”。
+- 已完成：
+  - 新增门禁核心模块：`app/core/spec12d_benchmark.py`
+  - 新增门禁单测：`backend/tests/test_spec12d_benchmark_service.py`
+  - 新增命令行门禁脚本：`backend/scripts/spec12d_gate.py`
+    - 支持阈值参数化：`min_hit/min_citation/max_e2e_p95`
+    - 校验失败返回非零退出码，便于 CI 直接拦截
+  - 新增 GitHub Actions 工作流：`.github/workflows/spec12d-regression.yml`
+    - 后端 Spec12D 相关测试
+    - 后端 compile check
+    - Spec12D summary 门禁校验
+    - 前端 build 校验
+  - baseline 执行说明补充 `single-turn` 默认建议
+- 验证：
+  - `python backend/scripts/spec12d_gate.py --summary docs/specs/spec-12d-results-tuned-v2/s0_summary.csv --min-hit-rate 0.92 --min-citation-rate 0.92 --max-e2e-p95-ms 8000` 通过
+  - Spec12D 相关后端测试通过（14 tests）
+- 下一轮建议：
+  - 进入工程收尾：补充一键回归命令（本地/CI 一致），并准备最终 PR 汇总说明。
+
+## 实施记录（2026-04-09，第 12 轮：最终回归封版）
+
+- 本轮目标：在最新压缩参数下完成 `S0(single-turn, 80题*3轮)` 回归，并通过门禁阈值。
+- 已完成：
+  - 进一步收紧回答输出预算：`qa_answer_max_tokens=70`，回答长度提示收敛到 60 字
+  - 执行最终回归：`docs/specs/spec-12d-results-final-v2/s0_summary.csv`
+  - 使用门禁脚本验证最终结果
+- 最终结果（3 轮）：
+  - en `E2E P95`: `6178 / 4829 / 5344 ms`
+  - zh `E2E P95`: `6730 / 7874 / 4711 ms`
+  - 质量保持：`hit=0.925`、`citation=0.925`
+  - 门禁结论：`passed=True`（max `E2E P95=7874ms`）
+- 判定：
+  - Spec12D 当前阶段收敛目标达成，可进入收尾与 PR 汇总阶段。
