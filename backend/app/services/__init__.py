@@ -39,6 +39,7 @@ from app.services.slide_lesson_plan_service import (
     run_asset_lesson_plan_pipeline,
 )
 from app.services.slide_dsl_service import (
+    ensure_asset_slides_schema_up_to_date,
     get_asset_slides_snapshot,
     run_asset_slides_dsl_pipeline,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "run_asset_mindmap_pipeline",
     "run_asset_lesson_plan_pipeline",
     "run_asset_slides_dsl_pipeline",
+    "ensure_asset_slides_schema_up_to_date",
     "get_asset_slides_snapshot",
     "ensure_asset_slide_tts",
     "retry_next_asset_slide_tts",

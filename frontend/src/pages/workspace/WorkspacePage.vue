@@ -435,6 +435,7 @@ async function openSlidesPage() {
   await router.push({
     name: 'slides-play',
     params: { assetId: assetId.value },
+    query: { runtime: 'reveal' },
   });
 }
 

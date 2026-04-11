@@ -17,6 +17,7 @@
     "markdown-it-texmath": "^1.0.0",
     "pdfjs-dist": "^4.8.69",
     "pinia": "^2.1.7",
+    "reveal.js": "^6.0.0",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0"
   },

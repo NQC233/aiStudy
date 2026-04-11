@@ -30,10 +30,40 @@ def repair_low_quality_pages(
         before_page = updated_pages[page_index]
         repaired_page = template_dsl.pages[page_index].model_copy(deep=True)
 
+        key_points_block = next(
+            (block for block in repaired_page.blocks if block.block_type == "key_points"),
+            None,
+        )
+        evidence_block = next(
+            (block for block in repaired_page.blocks if block.block_type == "evidence"),
+            None,
+        )
+        speaker_note_block = next(
+            (block for block in repaired_page.blocks if block.block_type == "speaker_note"),
+            None,
+        )
+
+        if key_points_block and len(key_points_block.items) < 2:
+            key_points_block.items.extend(
+                [
+                    f"补充说明：{repaired_page.stage} 阶段要点一",
+                    f"补充说明：{repaired_page.stage} 阶段要点二",
+                ]
+            )
+            key_points_block.items = key_points_block.items[:4]
+
+        if evidence_block and not evidence_block.items:
+            evidence_block.items = ["补充证据：请回看原文引用段落。"]
+
+        if speaker_note_block and not speaker_note_block.content.strip():
+            speaker_note_block.content = (
+                f"强调本页与主线阶段“{repaired_page.stage}”的衔接关系，并结合证据展开讲解。"
+            )
+
         repaired_page.blocks.append(
             SlideBlock(
                 block_type="speaker_tip",
-                content=f"强调本页与主线阶段“{repaired_page.stage}”的衔接关系。",
+                content="先讲结论，再讲证据，最后回扣主线。",
             )
         )
         updated_pages[page_index] = repaired_page

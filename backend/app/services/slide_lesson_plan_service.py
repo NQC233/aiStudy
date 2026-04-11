@@ -37,8 +37,6 @@ from app.schemas.slide_lesson_plan import (
 
 logger = logging.getLogger(__name__)
 
-LESSON_PLAN_PLACEHOLDER_SCRIPT = "【讲稿占位】本阶段讲解将在 Spec 11B/11C 完善。"
-
 _STAGES: list[tuple[str, str, tuple[str, ...]]] = [
     (
         "problem",
@@ -127,6 +125,26 @@ def _truncate(value: str, max_chars: int = 180) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return f"{normalized[: max_chars - 1].rstrip()}..."
+
+
+def _is_low_signal_quote(quote: str) -> bool:
+    text = _normalize_text(quote)
+    if not text:
+        return True
+    lowered = text.lower()
+    noisy_patterns = [
+        "provided proper attribution",
+        "google brain",
+        "copyright",
+        "all rights reserved",
+    ]
+    if any(pattern in lowered for pattern in noisy_patterns):
+        return True
+    if len(text) < 16:
+        return True
+    if re.fullmatch(r"[\d\.\s\-_:a-zA-Z]{1,20}", text):
+        return True
+    return False
 
 
 def _require_asset(db: Session, asset_id: str) -> Asset:
@@ -240,6 +258,12 @@ def _load_story_evidence(
                 },
             )
         )
+    for stage, anchors in list(stage_map.items()):
+        filtered = [anchor for anchor in anchors if not _is_low_signal_quote(anchor.quote)]
+        if filtered:
+            stage_map[stage] = filtered
+        else:
+            stage_map.pop(stage, None)
     return stage_map
 
 
@@ -271,6 +295,25 @@ def _fallback_anchor(
             "stage": stage,
         },
     )
+
+
+def _build_stage_goal(stage: str, title: str) -> str:
+    if stage == "problem":
+        return f"明确{title}中的核心挑战与研究动机。"
+    if stage == "method":
+        return f"概述{title}，建立整体方法框架。"
+    if stage == "mechanism":
+        return f"解释{title}涉及的关键模块与机制。"
+    if stage == "experiment":
+        return f"展示{title}中的主要结果与对比结论。"
+    return f"归纳{title}并给出可落地启发。"
+
+
+def _build_stage_script(title: str, anchors: list[LessonPlanEvidenceAnchor]) -> str:
+    if not anchors:
+        return f"{title}页先交代核心结论，再补充论文证据并自然过渡到下一页。"
+    quote = _truncate(anchors[0].quote, max_chars=80)
+    return f"{title}页可围绕证据“{quote}”展开，先讲结论，再解释其对主线论证的支撑作用。"
 
 
 def build_stage_lesson_plan(
@@ -319,8 +362,8 @@ def build_stage_lesson_plan(
             LessonPlanStage(
                 stage=stage,
                 title=title,
-                goal=f"完成“{title}”阶段讲解，帮助学习者建立主线理解。",
-                script=LESSON_PLAN_PLACEHOLDER_SCRIPT,
+                goal=_build_stage_goal(stage, title),
+                script=_build_stage_script(title, anchors),
                 evidence_anchors=anchors[:2],
                 source_section_hints=[],
             )

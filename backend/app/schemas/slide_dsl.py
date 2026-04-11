@@ -15,19 +15,36 @@ class SlideCitation(BaseModel):
 
 class SlideBlock(BaseModel):
     block_type: str
-    content: str
+    content: str = ""
+    items: list[str] = Field(default_factory=list)
+    svg_content: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class SlideAnimation(BaseModel):
+    animation_type: Literal[
+        "stagger_reveal",
+        "focus_emphasis",
+        "compare_switch",
+        "flow_step",
+    ]
+    target_block_type: str
+    cue_key: str
 
 
 class SlidePageDsl(BaseModel):
     slide_key: str
     stage: str
+    page_type: str = "topic"
     template_type: str
     animation_preset: str
+    animations: list[SlideAnimation] = Field(default_factory=list)
     blocks: list[SlideBlock] = Field(default_factory=list)
     citations: list[SlideCitation] = Field(default_factory=list)
 
 
 class SlidesDslPayload(BaseModel):
+    schema_version: Literal["2"] = "2"
     asset_id: str
     version: int
     generated_at: str
@@ -134,6 +151,9 @@ class SlidePlaybackPlan(BaseModel):
 class AssetSlidesResponse(BaseModel):
     asset_id: str
     slides_status: str
+    schema_version: str | None = None
+    rebuilding: bool = False
+    rebuild_reason: str | None = None
     tts_status: Literal[
         "not_generated",
         "processing",

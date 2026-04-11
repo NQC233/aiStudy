@@ -21,7 +21,7 @@ def _estimate_page_duration_ms(script: str) -> int:
 
 def _extract_script(page) -> str:
     for block in page.blocks:
-        if block.block_type == "script":
+        if block.block_type in {"speaker_note", "script"}:
             return block.content
     return ""
 

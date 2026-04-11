@@ -126,7 +126,9 @@ class SlideDslQualityFlowTests(unittest.TestCase):
         slides_dsl = build_slides_dsl(lesson_plan)
         report = validate_slides_must_pass(slides_dsl)
 
-        self.assertEqual(len(slides_dsl.pages), 5)
+        self.assertGreaterEqual(len(slides_dsl.pages), 8)
+        self.assertLessEqual(len(slides_dsl.pages), 16)
+        self.assertEqual(slides_dsl.schema_version, "2")
         self.assertTrue(report.passed)
         self.assertEqual(len(report.issues), 0)
 
@@ -147,7 +149,10 @@ class SlideDslQualityFlowTests(unittest.TestCase):
     def test_page_level_repair_improves_quality_without_regenerating_all(self) -> None:
         lesson_plan = _lesson_plan_payload()
         slides_dsl = build_slides_dsl(lesson_plan)
-        slides_dsl.pages[2].blocks = slides_dsl.pages[2].blocks[:1]
+        key_points_block = next(
+            block for block in slides_dsl.pages[2].blocks if block.block_type == "key_points"
+        )
+        key_points_block.items = []
         slides_dsl.pages[2].citations = []
 
         before = evaluate_slides_quality(slides_dsl)
@@ -159,7 +164,10 @@ class SlideDslQualityFlowTests(unittest.TestCase):
         self.assertGreater(after.overall_score, before.overall_score)
         self.assertGreaterEqual(len(fix_logs), 1)
         self.assertEqual(repaired_dsl.pages[0].slide_key, slides_dsl.pages[0].slide_key)
-        self.assertEqual(repaired_dsl.pages[4].slide_key, slides_dsl.pages[4].slide_key)
+        self.assertEqual(
+            repaired_dsl.pages[-1].slide_key,
+            slides_dsl.pages[-1].slide_key,
+        )
 
     def test_template_strategy_emits_shadow_scaffold_meta(self) -> None:
         lesson_plan = _lesson_plan_payload()

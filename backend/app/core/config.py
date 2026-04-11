@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     slides_llm_enabled: bool = False
     slides_shadow_eval_enabled: bool = True
     slides_processing_stale_timeout_sec: int = 300
+    slides_auto_upgrade_legacy_dsl_enabled: bool = True
     qa_context_max_hits: int = 2
     qa_context_chars_per_hit: int = 320
     qa_history_max_messages: int = 0

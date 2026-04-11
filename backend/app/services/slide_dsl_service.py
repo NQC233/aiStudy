@@ -32,6 +32,9 @@ from app.services.llm_service import (
     generate_slides_stage_copy,
 )
 from app.services.slide_fix_service import repair_low_quality_pages
+from app.services.slide_dsl_compiler_service import compile_markdown_draft_to_slides_dsl
+from app.services.slide_markdown_service import build_slide_markdown_draft
+from app.services.slide_outline_service import build_slide_outline
 from app.services.slide_playback_service import (
     build_playback_plan_from_slides,
     build_tts_manifest_placeholders,
@@ -42,67 +45,14 @@ from app.services.slide_quality_service import (
     validate_slides_must_pass,
 )
 
-_TEMPLATE_BY_STAGE = {
-    "problem": "problem_statement",
-    "method": "method_overview",
-    "mechanism": "mechanism_deep_dive",
-    "experiment": "experiment_results",
-    "conclusion": "conclusion_takeaways",
-}
-
-_ANIMATION_BY_STAGE = {
-    "problem": "title_in",
-    "method": "bullet_stagger",
-    "mechanism": "diagram_focus",
-    "experiment": "evidence_highlight",
-    "conclusion": "summary_fade",
-}
-
 SlidesStrategy = Literal["template", "llm"]
 SlidesBuilder = Callable[[AssetLessonPlanPayload], SlidesDslPayload]
 
 
-def _stage_to_page(stage: LessonPlanStage, page_index: int) -> SlidePageDsl:
-    citations = [
-        SlideCitation(
-            page_no=anchor.page_no,
-            block_ids=anchor.block_ids,
-            quote=anchor.quote,
-        )
-        for anchor in stage.evidence_anchors
-    ]
-    blocks = [
-        SlideBlock(block_type="title", content=stage.title),
-        SlideBlock(block_type="goal", content=stage.goal),
-        SlideBlock(block_type="script", content=stage.script),
-        SlideBlock(
-            block_type="evidence",
-            content="；".join(
-                citation.quote for citation in citations if citation.quote
-            ),
-        ),
-    ]
-    return SlidePageDsl(
-        slide_key=f"slide:{stage.stage}:{page_index + 1}",
-        stage=stage.stage,
-        template_type=_TEMPLATE_BY_STAGE.get(stage.stage, "generic_explain"),
-        animation_preset=_ANIMATION_BY_STAGE.get(stage.stage, "title_in"),
-        blocks=blocks,
-        citations=citations,
-    )
-
-
 def build_slides_dsl(lesson_plan: AssetLessonPlanPayload) -> SlidesDslPayload:
-    pages = [
-        _stage_to_page(stage, page_index)
-        for page_index, stage in enumerate(lesson_plan.stages)
-    ]
-    return SlidesDslPayload(
-        asset_id=lesson_plan.asset_id,
-        version=lesson_plan.version,
-        generated_at=datetime.now(timezone.utc).isoformat(),
-        pages=pages,
-    )
+    outline = build_slide_outline(lesson_plan)
+    draft = build_slide_markdown_draft(outline)
+    return compile_markdown_draft_to_slides_dsl(lesson_plan, draft)
 
 
 def _build_slides_dsl_by_strategy(
@@ -116,49 +66,37 @@ def _build_slides_dsl_by_strategy(
 
 
 def build_slides_dsl_via_llm(lesson_plan: AssetLessonPlanPayload) -> SlidesDslPayload:
-    pages: list[SlidePageDsl] = []
-
-    for page_index, stage in enumerate(lesson_plan.stages):
+    slides_dsl = build_slides_dsl(lesson_plan)
+    for page in slides_dsl.pages:
+        title_block = next((b for b in page.blocks if b.block_type == "title"), None)
+        note_block = next((b for b in page.blocks if b.block_type == "speaker_note"), None)
+        evidence_block = next((b for b in page.blocks if b.block_type == "evidence"), None)
+        key_points_block = next((b for b in page.blocks if b.block_type == "key_points"), None)
+        if not title_block or not note_block or not evidence_block:
+            continue
         llm_copy = generate_slides_stage_copy(
-            stage=stage.stage,
-            title=stage.title,
-            goal=stage.goal,
-            script=stage.script,
-            evidence_quotes=[
-                anchor.quote for anchor in stage.evidence_anchors if anchor.quote
-            ],
+            stage=page.stage,
+            title=title_block.content,
+            goal="",
+            script=note_block.content,
+            evidence_quotes=evidence_block.items,
         )
-        citations = [
-            SlideCitation(
-                page_no=anchor.page_no,
-                block_ids=anchor.block_ids,
-                quote=anchor.quote,
-            )
-            for anchor in stage.evidence_anchors
-        ]
-        blocks = [
-            SlideBlock(block_type="title", content=llm_copy["title"]),
-            SlideBlock(block_type="goal", content=llm_copy["goal"]),
-            SlideBlock(block_type="script", content=llm_copy["script"]),
-            SlideBlock(block_type="evidence", content=llm_copy["evidence"]),
-        ]
-        pages.append(
-            SlidePageDsl(
-                slide_key=f"slide:{stage.stage}:{page_index + 1}",
-                stage=stage.stage,
-                template_type=_TEMPLATE_BY_STAGE.get(stage.stage, "generic_explain"),
-                animation_preset=_ANIMATION_BY_STAGE.get(stage.stage, "title_in"),
-                blocks=blocks,
-                citations=citations,
-            )
-        )
+        title_block.content = llm_copy["title"]
+        note_block.content = llm_copy["script"]
+        evidence_block.items = [llm_copy["evidence"]]
+        if key_points_block and llm_copy.get("goal"):
+            key_points_block.items = [
+                llm_copy["goal"],
+                *[item for item in key_points_block.items if item][:2],
+            ][:4]
+    return slides_dsl
 
-    return SlidesDslPayload(
-        asset_id=lesson_plan.asset_id,
-        version=lesson_plan.version,
-        generated_at=datetime.now(timezone.utc).isoformat(),
-        pages=pages,
-    )
+
+def is_legacy_slides_dsl_payload(slides_dsl_payload: dict | None) -> bool:
+    if not isinstance(slides_dsl_payload, dict):
+        return True
+    schema_version = slides_dsl_payload.get("schema_version")
+    return schema_version != "2"
 
 
 def build_slides_dsl_with_strategy(
@@ -391,6 +329,7 @@ def get_asset_slides_snapshot(db: Session, asset_id: str) -> AssetSlidesResponse
     return AssetSlidesResponse(
         asset_id=asset.id,
         slides_status=asset.slides_status,
+        schema_version=slides_dsl.schema_version if slides_dsl is not None else None,
         tts_status=tts_status,
         playback_status=playback_status,
         auto_page_supported=playback_status == "ready",
@@ -403,3 +342,23 @@ def get_asset_slides_snapshot(db: Session, asset_id: str) -> AssetSlidesResponse
         tts_manifest=tts_manifest,
         playback_plan=playback_plan,
     )
+
+
+def ensure_asset_slides_schema_up_to_date(
+    db: Session,
+    asset_id: str,
+) -> tuple[Asset, bool, str]:
+    from app.services.slide_lesson_plan_service import enqueue_asset_lesson_plan_rebuild
+
+    asset = _require_asset(db, asset_id)
+    presentation = db.scalars(
+        select(Presentation).where(Presentation.asset_id == asset_id)
+    ).first()
+    if presentation is None:
+        return asset, False, "presentation 不存在，跳过 schema 升级检查。"
+    if not is_legacy_slides_dsl_payload(presentation.slides_dsl):
+        return asset, False, "slides_dsl 已是 v2，无需重建。"
+    rebuilt_asset, should_enqueue, _ = enqueue_asset_lesson_plan_rebuild(db, asset_id)
+    if should_enqueue:
+        return rebuilt_asset, True, "检测到旧版 slides_dsl，已自动触发 schema 升级重建。"
+    return rebuilt_asset, False, "检测到旧版 slides_dsl，但当前已有重建任务在执行。"

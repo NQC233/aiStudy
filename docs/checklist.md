@@ -51,6 +51,8 @@
 - [x] RAG 实验范围已确认：英文语料 + 中文/英文提问（中文论文解析不纳入本轮）
 - [x] RAG 评测协议已冻结：`S0/S1/S2/S3`、3 轮评测、`citation_correct` 严格 `block_id` 命中、`E2E P95<=8s`
 - [x] 已补齐资产删除能力：支持 `DELETE /api/assets/{asset_id}`，并执行数据库级联删除 + OSS 双层清理
+- [x] Spec 12D 已收敛闭环；后续 RAG 以回归门禁运行为主，不再作为新功能主线
+- [x] 新增后续双 Spec 主线：Spec 15（演示生成与播放增强）-> Spec 16（前端整体体验优化）
 
 ## 3. 当前待确认事项
 
@@ -85,10 +87,14 @@
 
 ### 进行中
 
-- [ ] Spec 12：TTS 与自动翻页（进行中：第 11 轮已完成工作区重试摘要，待按页重试详情和演示体验收敛）
+- [x] Spec 12：TTS 与自动翻页（核心链路已完成，后续演示内容与播放体验增强迁移至 Spec 15）
 - [x] Spec 12D：RAG 评测协议与优化闭环（已锁定 S0(single-turn)、完成 P95 收敛并通过最终回归门禁）
+- [ ] Spec 15：演示文稿生成与播放体验增强（进行中：DSL v2 替换、动态页数与首访自动重建已落地首轮）
+- [ ] Spec 15.1：Slides 播放运行时迁移到 Reveal.js（进行中：Reveal runtime 首轮接入，保留 legacy 回退）
 
 ### 待开始
+
+- [ ] Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay）
 
 ### 暂缓到后续阶段
 
@@ -113,8 +119,10 @@
 14. Spec 11B：页面 DSL 生成与分级校验
 15. Spec 11C：演示播放页与工作区入口（当前为自研分页渲染）
 16. Spec 12：TTS 与自动翻页
-17. Spec 13：Anki CSV 导出
-18. Spec 14：课后习题
+17. Spec 15：演示文稿生成与播放体验增强（动态页数 + rich DSL + SlidesPlay）
+18. Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay）
+19. Spec 13：Anki CSV 导出
+20. Spec 14：课后习题
 
 ## 6. 每轮开发完成后必须更新的内容
 
@@ -1333,6 +1341,241 @@
   - 用户补充 Attention 资产并完成解析后，按 Spec 12D 执行 `S0` 三轮 baseline
 - 建议提交信息：
   - `feat: add asset deletion with cascade cleanup and oss purge`
+
+### Spec 15 交付记录（第 0 轮：规划定稿）
+
+- 完成内容：
+  - 新增 Spec 15 权威文档：`docs/specs/spec-15-slides-generation-and-playback-enhancement.md`
+  - 新增 Spec 16 权威文档（立项占位）：`docs/specs/spec-16-frontend-overall-ux-polish.md`
+  - 冻结 Spec 15 关键范围与决策：
+    - 技术路线：混合路线（保留现有链路 + outline + markdown draft + rich DSL）
+    - 动态页数：默认 `8~16`
+    - 展示范围：Spec 15 包含 `SlidesPlay` 升级；Spec 16 再处理 `Library/Workspace`
+    - 图示策略：先用内置 SVG（不引入重型新引擎）
+  - 更新路线图与执行顺序，明确 Spec 15 -> Spec 16 的后续节奏
+- 主要新增或修改文件：
+  - `docs/specs/spec-15-slides-generation-and-playback-enhancement.md`
+  - `docs/specs/spec-16-frontend-overall-ux-polish.md`
+  - `docs/roadmap.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - 文档一致性检查通过：`AGENTS.md` 主线约束、`docs/specs/` 权威目录策略与当前执行范围一致
+- 当前已知缺口：
+  - Spec 15 仍需拆解为可执行任务并进入实现
+  - Spec 16 当前仅完成立项与边界冻结，尚未开始实现
+- 下一轮建议：
+  - 进入 Spec 15 第 1 轮：先落地动态页数与 outline 中间层
+- 建议提交信息：
+  - `docs: add spec15/spec16 planning and align roadmap checklist`
+
+### Spec 15 交付记录（第 1 轮：DSL v2 骨架与自动升级重建）
+
+- 完成内容：
+  - `slides_dsl` 升级为 v2 契约（`schema_version=2`），支持 richer block 字段（`items/svg_content/meta`）与语义动画描述
+  - 生成链路升级为混合中间层骨架：`outline -> markdown draft -> dsl compiler`
+  - 动态页数规则落地：页数由内容复杂度估计并统一约束到 `8~16`
+  - 质量门禁升级首版：新增页数门禁、key_points/evidence/speaker_note 密度门禁、重复惩罚与讲稿可讲性评分
+  - 增加旧稿识别逻辑：检测 legacy `slides_dsl` 时，在首次访问 slides 接口自动触发重建入队
+  - 前端播放页与 API 类型同步 v2 契约，新增“自动升级重建中”容错显示，避免旧稿直接报错中断
+- 主要新增或修改文件：
+  - `backend/app/schemas/slide_dsl.py`
+  - `backend/app/services/slide_outline_service.py`
+  - `backend/app/services/slide_markdown_service.py`
+  - `backend/app/services/slide_dsl_compiler_service.py`
+  - `backend/app/services/slide_dsl_service.py`
+  - `backend/app/services/slide_quality_service.py`
+  - `backend/app/services/slide_fix_service.py`
+  - `backend/app/services/slide_playback_service.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/app/core/config.py`
+  - `backend/app/services/__init__.py`
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `backend/tests/test_slide_dsl_quality_flow.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_tts_service.py tests/test_slide_playback_service.py tests/test_slide_dsl_quality_flow.py tests/test_spec15_slides_pipeline.py -v` 已通过（17 tests）
+  - `cd backend && .venv/bin/python -m compileall app main.py` 已通过
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - 播放页 rich block 仍为兼容渲染首版，尚未完成完整组件分发与 SVG 白名单渲染
+  - `slide_dsl_service` 编排职责仍偏重，后续应继续下沉到独立 orchestrator
+  - 尚未补齐“接口首访自动重建”端到端集成测试
+- 下一轮建议：
+  - 进入 Spec 15 第 2 轮：完成 SlidesPlay block renderer 组件化、SVG 白名单渲染和语义动画 cue 对齐
+- 建议提交信息：
+  - `feat: replace slides dsl with v2 pipeline and auto-rebuild legacy payloads`
+
+### Spec 15 交付记录（第 2 轮：SlidesPlay block renderer 与 SVG 安全渲染）
+
+- 完成内容：
+  - 播放页接入 block renderer 分发组件，按 `block_type` 渲染 `key_points/evidence/speaker_note/takeaway/diagram_svg`。
+  - 新增 `SafeSvgRenderer`，对 SVG 进行标签/属性白名单过滤，移除脚本与危险属性。
+  - 播放页页内渲染从硬编码字段切到遍历 blocks，支持 richer DSL 内容扩展。
+  - 新增 Playwright 验收：
+    - 旧稿自动升级重建提示可见
+    - `diagram_svg` 渲染可见且脚本被剔除
+- 主要新增或修改文件：
+  - `frontend/src/components/slides/SafeSvgRenderer.vue`
+  - `frontend/src/components/slides/SlideBlockRenderer.vue`
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd frontend && npm run test:e2e:spec12` 已通过（6 tests）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - cue 激活仍使用 `block_id` 字符串约定匹配，尚未引入更强结构化映射
+  - SVG 白名单为首版规则，后续可补更多合法标签/属性覆盖测试
+- 下一轮建议：
+  - 进入 Spec 15 第 3 轮：增强 cue 与动画的结构化映射，并补端到端“首访自动重建”后恢复播放链路
+- 建议提交信息：
+  - `feat: add slides block renderer and safe svg rendering for spec15`
+
+### Spec 15 交付记录（第 3 轮：cue 结构化映射与重建轮询增强）
+
+- 完成内容：
+  - 播放时间轴 composable 输出从 `activeCueBlockId` 升级为结构化 `activeCue`（`blockId/blockType/animation`）。
+  - 播放页 block 高亮触发改为按 `activeCue.blockType` 精确匹配，减少字符串包含匹配带来的脆弱性。
+  - 演示升级重建状态新增轮询调度器（`rebuildingPollTimer`），在 `processing + rebuilding` 场景下持续自动刷新，直至恢复 ready。
+  - Playwright 用例新增“schema 重建完成后自动恢复可播放”路径，保证旧稿升级闭环。
+- 主要新增或修改文件：
+  - `frontend/src/composables/useSlidesPlaybackTimeline.ts`
+  - `frontend/src/composables/useSlidesPlaybackTimeline.js`
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd frontend && npm run test:e2e:spec12` 已通过（7 tests）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - cue 与 animation 仍来自 playback_plan 估算，尚未与真实音频分句强绑定
+  - 后端接口层“自动重建触发”尚未补后端集成测试
+- 下一轮建议：
+  - 进入 Spec 15 第 4 轮：补后端自动重建集成测试与 `flow/comparison` 专项渲染组件
+- 建议提交信息：
+  - `feat: add structured cue mapping and resilient schema-rebuild polling in slides player`
+
+### Spec 15 交付记录（第 4 轮：自动重建测试补强与 flow/comparison 渲染）
+
+- 完成内容：
+  - 后端新增自动重建行为测试：覆盖 legacy `slides_dsl` 自动触发重建与 v2 跳过重建两条路径。
+  - 播放页新增 `comparison` 与 `flow` 专项渲染样式，避免 richer block 回退到通用文本展示。
+  - Playwright 新增并通过“comparison + flow 组件渲染可见”验收场景。
+- 主要新增或修改文件：
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `frontend/src/components/slides/SlideBlockRenderer.vue`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_spec15_slides_pipeline.py tests/test_slide_dsl_quality_flow.py tests/test_slide_playback_service.py -v` 已通过（14 tests）
+  - `cd frontend && npm run test:e2e:spec12` 已通过（8 tests）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - comparison 数据结构目前仍以简化字符串分列，后续可升级为结构化行列 schema
+  - 后端“接口级首访自动重建”尚未加入真实数据库集成测试
+- 下一轮建议：
+  - 进入 Spec 15 第 5 轮：补 comparison/flow 结构化 schema 与后端集成测试（含数据库会话）
+- 建议提交信息：
+  - `test: harden spec15 auto-rebuild coverage and add flow/comparison block rendering`
+
+### Spec 15 交付记录（第 5 轮：comparison/flow 结构化 schema 落地）
+
+- 完成内容：
+  - 后端 DSL 编译器为 `comparison` 与 `flow` block 输出结构化 `meta` 数据：
+    - comparison: `meta.columns[] + meta.rows[][]`
+    - flow: `meta.steps[]`
+  - 增加后端单测校验上述结构化契约，避免回退为弱结构文本。
+  - 前端 `SlideBlockRenderer` 优先读取结构化 `meta` 渲染 comparison/flow，并保留 `items` 兼容兜底。
+  - Playwright 验收升级：comparison/flow 场景改为 meta-only 输入，验证结构化渲染闭环。
+- 主要新增或修改文件：
+  - `backend/app/services/slide_dsl_compiler_service.py`
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `frontend/src/components/slides/SlideBlockRenderer.vue`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_spec15_slides_pipeline.py tests/test_slide_dsl_quality_flow.py tests/test_slide_playback_service.py tests/test_slide_tts_service.py -v` 已通过（20 tests）
+  - `cd frontend && npm run test:e2e:spec12` 已通过（8 tests）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - comparison/flow 结构化 schema 目前仅在生成层与渲染层落地，API 文档尚未补充字段说明
+  - 自动重建的数据库级集成测试仍待补齐
+- 下一轮建议：
+  - 进入 Spec 15 第 6 轮：补 API/schema 文档与数据库级自动重建集成测试
+- 建议提交信息：
+  - `feat: add structured comparison flow blocks across spec15 compiler and player`
+
+### Spec 15.1 交付记录（第 1 轮：Reveal runtime 首轮接入）
+
+- 完成内容：
+  - 前端新增 Reveal 播放组件 `RevealSlidesDeck`，支持固定 16:9 画布、fragment 动画、comparison/flow/diagram 渲染。
+  - Slides 播放页接入 runtime 切换：默认 `runtime=reveal`，保留 `runtime=legacy` 回退路径。
+  - 工作区“进入演示播放页”默认携带 reveal runtime 参数。
+  - Playwright 回归用例显式切到 legacy runtime，新增默认 reveal 路由可用性用例。
+  - 新增权威 Spec：`docs/specs/spec-15.1-reveal-runtime-migration.md`。
+- 主要新增或修改文件：
+  - `frontend/src/components/slides/RevealSlidesDeck.vue`
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+  - `frontend/package.json`
+  - `docs/specs/spec-15.1-reveal-runtime-migration.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd frontend && npm run test:e2e:spec12` 已通过（9 tests）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - reveal runtime 引入后包体明显增大，需后续做路由级懒加载和插件裁剪
+  - cue 与 reveal fragment 仍是弱映射，尚未做精细对齐
+  - 后端自动重建数据库级集成测试尚未落地
+- 下一轮建议：
+  - 进入 Spec 15.1 第 2 轮：补 reveal runtime 懒加载拆包、cue-fragment 精细映射、公式回归样例
+- 建议提交信息：
+  - `feat: add reveal runtime for slides playback with legacy fallback`
+
+### Spec 15 交付记录（第 7 轮：展示文案去备课层化）
+
+- 完成内容：
+  - 优化 `slide_markdown_service` 的 `key_points` 生成策略，移除“本页目标/先讲什么”等备课层脚手架文案。
+  - `key_points` 改为面向观众的陈述性内容（结论 + 证据 + 页型要点），提升展示文本与 speaker note 的一致性。
+  - 新增单测约束，防止 `key_points` 回退到备课层提示语。
+- 主要新增或修改文件：
+  - `backend/app/services/slide_markdown_service.py`
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_spec15_slides_pipeline.py tests/test_slide_dsl_quality_flow.py -v` 已通过（13 tests）
+- 当前已知缺口：
+  - 目前仍以规则生成展示文案，尚未引入“演讲稿-展示稿一致性评分”
+- 下一轮建议：
+  - 增加展示稿/讲稿一致性质量门禁（例如 overlap/contradiction 指标）
+- 建议提交信息：
+  - `fix: remove planning-style key points from spec15 slide draft content`
+
+### Spec 15 交付记录（第 8 轮：备课层占位脚本清理与内容去模板化）
+
+- 完成内容：
+  - `lesson_plan` 生成移除历史占位脚本（`Spec 11B/11C` 文案），改为基于阶段与证据的可讲述脚本。
+  - 增加低信号证据过滤（版权声明/极短标题类文本），减少无关证据进入讲稿。
+  - `slide_markdown_service` 继续去模板化：关键点首条加入页标题上下文，减少跨页重复句式。
+  - 新增单测，防止占位脚本与脚手架文案回流到展示层。
+- 主要新增或修改文件：
+  - `backend/app/services/slide_lesson_plan_service.py`
+  - `backend/app/services/slide_markdown_service.py`
+  - `backend/tests/test_slide_lesson_plan_service.py`
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_spec15_slides_pipeline.py tests/test_slide_lesson_plan_service.py tests/test_slide_dsl_quality_flow.py -v` 已通过（20 tests）
+  - 已重建并重启 `backend/worker`，并重新触发 `Mamba` 与 `Attention Is All You Need` 的 llm 演示重建任务。
+- 当前已知缺口：
+  - 内容仍存在“规则生成痕迹”，尚未引入更强的语义压缩与跨页去重策略。
+- 下一轮建议：
+  - 引入“展示稿-讲稿一致性 + 跨页重复率”联合门禁，并在生成阶段增加句式多样化重写。
+- 建议提交信息：
+  - `fix: remove legacy lesson-plan placeholder script and reduce templated slide copy`
 
 ## 7. 相关文档
 
