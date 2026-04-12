@@ -2,6 +2,12 @@ import { computed, ref, type Ref } from 'vue';
 
 import type { SlideDslPage, SlidePlaybackPlan, SlidePlaybackPagePlan } from '@/api/assets';
 
+interface ActiveCueMeta {
+  blockId: string;
+  blockType: string;
+  animation: string;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -52,7 +58,7 @@ export function useSlidesPlaybackTimeline(options: {
     return previewGlobalMs.value;
   });
 
-  const activeCueBlockId = computed(() => {
+  const activeCue = computed<ActiveCueMeta | null>(() => {
     if (!currentPagePlan.value || currentPagePlan.value.cues.length === 0) {
       return null;
     }
@@ -60,7 +66,17 @@ export function useSlidesPlaybackTimeline(options: {
     const cue = currentPagePlan.value.cues.find(
       (item) => cursor >= item.start_ms && cursor < item.end_ms,
     );
-    return cue?.block_id ?? currentPagePlan.value.cues[currentPagePlan.value.cues.length - 1]?.block_id ?? null;
+    const effectiveCue = cue ?? currentPagePlan.value.cues[currentPagePlan.value.cues.length - 1] ?? null;
+    if (!effectiveCue) {
+      return null;
+    }
+    const parts = effectiveCue.block_id.split(':');
+    const blockType = parts.length >= 3 ? parts[parts.length - 2] : '';
+    return {
+      blockId: effectiveCue.block_id,
+      blockType,
+      animation: effectiveCue.animation,
+    };
   });
 
   function setPlaying(value: boolean) {
@@ -125,7 +141,7 @@ export function useSlidesPlaybackTimeline(options: {
     totalDurationMs,
     displayedGlobalMs,
     currentPageElapsedMs,
-    activeCueBlockId,
+    activeCue,
     setPlaying,
     setAutoPageEnabled,
     syncToSlideStart,

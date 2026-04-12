@@ -16,6 +16,12 @@ celery_app.conf.update(
     timezone="Asia/Shanghai",
     enable_utc=False,
     task_track_started=True,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    worker_prefetch_multiplier=max(settings.celery_worker_prefetch_multiplier, 1),
+    broker_transport_options={
+        "visibility_timeout": max(settings.celery_visibility_timeout_sec, 300),
+    },
 )
 
 celery_app.autodiscover_tasks(["app.workers"])

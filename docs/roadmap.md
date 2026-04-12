@@ -80,6 +80,8 @@
 - 讲稿查看
 - TTS 播放
 - 自动翻页
+- 演示文稿内容与播放体验增强（动态页数、rich DSL、图示）
+- 前端整体体验收敛（Library + Workspace + SlidesPlay）
 
 ### Phase 3：复习闭环补全
 
@@ -179,6 +181,17 @@
 
 - 增加 TTS 播放能力
 - 支持自动翻页与播放控制
+
+### Spec 15：演示文稿生成与播放体验增强
+
+- 动态页数（默认 8~16）与叙事密度提升
+- 生成链路升级为 outline + markdown draft + rich DSL
+- 播放页支持 richer block 和 SVG 图示渲染
+
+### Spec 16：前端整体体验优化
+
+- 覆盖 Library + Workspace + SlidesPlay 三页体验收敛
+- 统一信息层级、状态反馈与关键路径交互
 
 ### Spec 13：Anki CSV 导出
 

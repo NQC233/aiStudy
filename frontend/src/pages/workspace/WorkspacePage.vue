@@ -59,7 +59,7 @@ const resourceWarning = ref('');
 const mindmapError = ref('');
 const slidesActionMessage = ref('');
 const slidesActionError = ref('');
-const slidesStrategy = ref<'template' | 'llm'>('template');
+const slidesStrategy = ref<'template' | 'llm'>('llm');
 const retrying = ref(false);
 const rebuildingMindmap = ref(false);
 const rebuildingSlides = ref(false);
@@ -435,6 +435,7 @@ async function openSlidesPage() {
   await router.push({
     name: 'slides-play',
     params: { assetId: assetId.value },
+    query: { runtime: 'reveal' },
   });
 }
 

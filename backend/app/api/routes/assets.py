@@ -46,6 +46,7 @@ from app.schemas.chat import ChatSessionCreateRequest, ChatSessionItem
 from app.services import (
     create_asset_note,
     enqueue_asset_lesson_plan_rebuild,
+    ensure_asset_slides_schema_up_to_date,
     create_asset_chat_session,
     create_uploaded_asset,
     enqueue_asset_mindmap_rebuild,
@@ -209,7 +210,20 @@ def get_asset_slides_endpoint(
     db: Session = Depends(get_db),
 ) -> AssetSlidesResponse:
     """返回用于播放页渲染的 slides_dsl 与质量报告。"""
-    return get_asset_slides_snapshot(db, asset_id)
+    auto_rebuild_enqueued = False
+    if settings.slides_auto_upgrade_legacy_dsl_enabled:
+        asset, should_enqueue, _ = ensure_asset_slides_schema_up_to_date(db, asset_id)
+        if should_enqueue:
+            strategy = "llm" if settings.slides_llm_enabled else "template"
+            enqueue_generate_asset_lesson_plan.delay(asset.id, strategy=strategy)
+            auto_rebuild_enqueued = True
+
+    snapshot = get_asset_slides_snapshot(db, asset_id)
+    if auto_rebuild_enqueued:
+        snapshot.slides_status = "processing"
+        snapshot.rebuilding = True
+        snapshot.rebuild_reason = "schema_upgrade_rebuild"
+    return snapshot
 
 
 @router.post(

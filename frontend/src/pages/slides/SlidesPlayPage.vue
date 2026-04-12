@@ -12,11 +12,15 @@ import {
   type AssetSlidesResponse,
   type SlideDslPage,
 } from '@/api/assets';
+import RevealSlidesDeck from '@/components/slides/RevealSlidesDeck.vue';
+import SlideBlockRenderer from '@/components/slides/SlideBlockRenderer.vue';
 import { useSlidesPlaybackTimeline } from '@/composables/useSlidesPlaybackTimeline';
 
 const route = useRoute();
 const router = useRouter();
 const assetId = computed(() => String(route.params.assetId ?? ''));
+const runtimeMode = computed(() => String(route.query.runtime ?? 'reveal'));
+const isRevealRuntime = computed(() => runtimeMode.value !== 'legacy');
 
 const loading = ref(false);
 const errorMessage = ref('');
@@ -27,6 +31,7 @@ const failedNextPageIndex = ref<number | null>(null);
 const waitingNextPageIndex = ref<number | null>(null);
 const waitingResumePlayback = ref(false);
 const waitingPollTimer = ref<number | null>(null);
+const rebuildingPollTimer = ref<number | null>(null);
 const asset = ref<AssetDetail | null>(null);
 const slidesResponse = ref<AssetSlidesResponse | null>(null);
 const currentSlideIndex = ref(0);
@@ -50,7 +55,7 @@ const {
   totalDurationMs,
   displayedGlobalMs,
   currentPageElapsedMs,
-  activeCueBlockId,
+  activeCue,
   setPlaying,
   setAutoPageEnabled,
   syncToSlideStart,
@@ -106,7 +111,28 @@ function blockContent(page: SlideDslPage | null, blockType: string): string {
   if (!page) {
     return '';
   }
-  return page.blocks.find((item) => item.block_type === blockType)?.content ?? '';
+  const block = page.blocks.find((item) => item.block_type === blockType);
+  if (!block) {
+    return '';
+  }
+  if (block.content?.trim()) {
+    return block.content;
+  }
+  if (block.items?.length) {
+    return block.items.join('；');
+  }
+  return '';
+}
+
+function isBlockActive(blockType: string): boolean {
+  return activeCue.value?.blockType === blockType;
+}
+
+function handleRevealSlideChange(index: number) {
+  if (index === currentSlideIndex.value) {
+    return;
+  }
+  void navigateToSlide(index, true);
 }
 
 function formatMs(value: number): string {
@@ -153,8 +179,14 @@ async function loadSlides() {
     const slides = slidesResponse.value;
 
     if (!slides?.slides_dsl || slides.slides_status !== 'ready') {
+      if (slides?.rebuilding || slides?.rebuild_reason === 'schema_upgrade_rebuild' || slides?.slides_status === 'processing') {
+        playbackMessage.value = '检测到旧版演示结构，系统正在自动升级重建，请稍后自动刷新。';
+        scheduleRebuildingPoll();
+        return;
+      }
       throw new Error('当前演示内容尚未就绪，请先在工作区触发生成。');
     }
+    clearRebuildingPoll();
     syncToSlideStart(currentSlideIndex.value);
     clampCurrentSlide();
   } catch (error) {
@@ -219,6 +251,21 @@ function clearWaitingTimer() {
     window.clearTimeout(waitingPollTimer.value);
     waitingPollTimer.value = null;
   }
+}
+
+function clearRebuildingPoll() {
+  if (rebuildingPollTimer.value !== null) {
+    window.clearTimeout(rebuildingPollTimer.value);
+    rebuildingPollTimer.value = null;
+  }
+}
+
+function scheduleRebuildingPoll() {
+  clearRebuildingPoll();
+  rebuildingPollTimer.value = window.setTimeout(() => {
+    rebuildingPollTimer.value = null;
+    void loadSlides();
+  }, 2500);
 }
 
 function clearWaitingState() {
@@ -440,7 +487,7 @@ async function recoverSlidesAndBack() {
   recoveringSlides.value = true;
 
   try {
-    await rebuildAssetSlides(assetId.value);
+    await rebuildAssetSlides(assetId.value, 'llm');
     await router.push({
       name: 'workspace',
       params: { assetId: assetId.value },
@@ -458,6 +505,17 @@ watch(
   () => {
     currentSlideIndex.value = 0;
     void loadSlides();
+  },
+);
+
+watch(
+  () => slidesResponse.value?.slides_status,
+  (status) => {
+    if (status === 'processing' && slidesResponse.value?.rebuilding) {
+      scheduleRebuildingPoll();
+    } else if (status === 'ready') {
+      clearRebuildingPoll();
+    }
   },
 );
 
@@ -486,6 +544,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  clearRebuildingPoll();
   clearWaitingState();
   pausePlayback();
   if (audioEl.value) {
@@ -606,20 +665,20 @@ onUnmounted(() => {
             </button>
           </nav>
 
-          <article v-if="currentPage" class="slides-section">
+          <RevealSlidesDeck
+            v-if="isRevealRuntime && pages.length"
+            :pages="pages"
+            :current-index="currentSlideIndex"
+            @update:current-index="handleRevealSlideChange"
+          />
+          <article v-else-if="currentPage" class="slides-section">
             <h2>{{ currentSlideIndex + 1 }}. {{ blockContent(currentPage, 'title') || currentPage.stage }}</h2>
-            <p
-              class="slides-goal"
-              :class="{ 'slides-section__active-cue': activeCueBlockId?.includes(':goal:') }"
-            >
-              {{ blockContent(currentPage, 'goal') }}
-            </p>
-            <p
-              class="slides-evidence"
-              :class="{ 'slides-section__active-cue': activeCueBlockId?.includes(':evidence:') }"
-            >
-              {{ blockContent(currentPage, 'evidence') }}
-            </p>
+            <SlideBlockRenderer
+              v-for="(block, idx) in currentPage.blocks"
+              :key="`${currentPage.slide_key}-${block.block_type}-${idx}`"
+              :block="block"
+              :active="isBlockActive(block.block_type)"
+            />
           </article>
           <section v-else class="slides-empty">暂无可播放页面。</section>
         </section>
@@ -631,7 +690,7 @@ onUnmounted(() => {
           </header>
 
           <p class="slides-script">
-            {{ currentPage ? blockContent(currentPage, 'script') : '切换页面后查看讲稿。' }}
+            {{ currentPage ? (blockContent(currentPage, 'speaker_note') || blockContent(currentPage, 'script')) : '切换页面后查看讲稿。' }}
           </p>
           <p class="slides-meta">
             当前页音频：{{ currentManifestItem?.status ?? 'pending' }}
@@ -881,6 +940,14 @@ onUnmounted(() => {
 
 .slides-goal {
   font-weight: 600;
+}
+
+.slides-key-points {
+  margin: 0 0 0.7rem;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.3rem;
+  color: #2f3a4a;
 }
 
 .slides-section__active-cue {

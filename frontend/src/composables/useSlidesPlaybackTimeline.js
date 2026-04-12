@@ -31,13 +31,23 @@ export function useSlidesPlaybackTimeline(options) {
         }
         return previewGlobalMs.value;
     });
-    const activeCueBlockId = computed(() => {
+    const activeCue = computed(() => {
         if (!currentPagePlan.value || currentPagePlan.value.cues.length === 0) {
             return null;
         }
         const cursor = clamp(currentPageElapsedMs.value, 0, currentPagePlan.value.duration_ms);
         const cue = currentPagePlan.value.cues.find((item) => cursor >= item.start_ms && cursor < item.end_ms);
-        return cue?.block_id ?? currentPagePlan.value.cues[currentPagePlan.value.cues.length - 1]?.block_id ?? null;
+        const effectiveCue = cue ?? currentPagePlan.value.cues[currentPagePlan.value.cues.length - 1] ?? null;
+        if (!effectiveCue) {
+            return null;
+        }
+        const parts = effectiveCue.block_id.split(':');
+        const blockType = parts.length >= 3 ? parts[parts.length - 2] : '';
+        return {
+            blockId: effectiveCue.block_id,
+            blockType,
+            animation: effectiveCue.animation,
+        };
     });
     function setPlaying(value) {
         isPlaying.value = value;
@@ -90,7 +100,7 @@ export function useSlidesPlaybackTimeline(options) {
         totalDurationMs,
         displayedGlobalMs,
         currentPageElapsedMs,
-        activeCueBlockId,
+        activeCue,
         setPlaying,
         setAutoPageEnabled,
         syncToSlideStart,

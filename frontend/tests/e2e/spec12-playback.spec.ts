@@ -1,6 +1,14 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
-type FlowMode = 'auto-resume' | 'next-failed' | 'current-retrying';
+type FlowMode =
+  | 'auto-resume'
+  | 'next-failed'
+  | 'current-retrying'
+  | 'schema-rebuilding'
+  | 'schema-rebuilding-then-ready'
+  | 'diagram-svg'
+  | 'flow-comparison'
+  | 'reveal-layout';
 
 function buildAssetDetail(assetId: string) {
   const now = new Date().toISOString();
@@ -32,11 +40,15 @@ function buildAssetDetail(assetId: string) {
 function buildSlidesSnapshot() {
   return {
     asset_id: 'asset-e2e',
+    schema_version: '2',
+    rebuilding: false,
+    rebuild_reason: null,
     slides_status: 'ready',
     tts_status: 'processing',
     playback_status: 'ready',
     auto_page_supported: true,
     slides_dsl: {
+      schema_version: '2',
       asset_id: 'asset-e2e',
       version: 1,
       generated_at: new Date().toISOString(),
@@ -44,26 +56,34 @@ function buildSlidesSnapshot() {
         {
           slide_key: 'slide:problem:1',
           stage: 'problem',
-          template_type: 'problem_statement',
-          animation_preset: 'title_in',
+          page_type: 'topic',
+          layout_hint: 'hero-left',
+          director_source: 'rule',
+          template_type: 'topic_deep_dive',
+          animation_preset: 'stagger_reveal',
+          animations: [],
           blocks: [
-            { block_type: 'title', content: '问题背景' },
-            { block_type: 'goal', content: '明确问题边界' },
-            { block_type: 'evidence', content: '引用关键证据' },
-            { block_type: 'script', content: '第一页讲稿。' },
+            { block_type: 'title', content: '问题背景', items: [] },
+            { block_type: 'key_points', content: '', items: ['明确问题边界', '解释主要挑战'] },
+            { block_type: 'evidence', content: '', items: ['引用关键证据'] },
+            { block_type: 'speaker_note', content: '第一页讲稿。', items: [] },
           ],
           citations: [],
         },
         {
           slide_key: 'slide:method:2',
           stage: 'method',
-          template_type: 'method_overview',
-          animation_preset: 'bullet_stagger',
+          page_type: 'topic',
+          layout_hint: 'insight-stack',
+          director_source: 'rule',
+          template_type: 'topic_deep_dive',
+          animation_preset: 'stagger_reveal',
+          animations: [],
           blocks: [
-            { block_type: 'title', content: '方法概览' },
-            { block_type: 'goal', content: '理解方法流程' },
-            { block_type: 'evidence', content: '对照实验结果' },
-            { block_type: 'script', content: '第二页讲稿。' },
+            { block_type: 'title', content: '方法概览', items: [] },
+            { block_type: 'key_points', content: '', items: ['理解方法流程', '关注核心模块'] },
+            { block_type: 'evidence', content: '', items: ['对照实验结果'] },
+            { block_type: 'speaker_note', content: '第二页讲稿。', items: [] },
           ],
           citations: [],
         },
@@ -137,6 +157,7 @@ async function mockSlidesApi(page: Page, mode: FlowMode) {
   const state = {
     slides: buildSlidesSnapshot(),
     ensureNextCalls: 0,
+    slidesFetchCalls: 0,
   };
 
   if (mode === 'current-retrying') {
@@ -148,6 +169,55 @@ async function mockSlidesApi(page: Page, mode: FlowMode) {
       next_retry_eta: '2026-04-07T12:00:00Z',
       error_code: 'external_dependency',
     };
+  }
+
+  if (mode === 'schema-rebuilding') {
+    state.slides.slides_status = 'processing';
+    state.slides.rebuilding = true;
+    state.slides.rebuild_reason = 'schema_upgrade_rebuild';
+    state.slides.slides_dsl = null;
+  }
+
+  if (mode === 'diagram-svg') {
+    state.slides.slides_dsl.pages[0].page_type = 'diagram';
+    state.slides.slides_dsl.pages[0].blocks.push({
+      block_type: 'diagram_svg',
+      content: '',
+      items: [],
+      svg_content:
+        "<svg viewBox='0 0 100 40' xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='98' height='38' fill='#eee'/><text x='10' y='24'>diagram</text><script>alert('x')</script></svg>",
+    });
+  }
+
+  if (mode === 'flow-comparison') {
+    state.slides.slides_dsl.pages[0].blocks = [
+      { block_type: 'title', content: '方法对比', items: [] },
+      {
+        block_type: 'comparison',
+        content: '',
+        items: [],
+        meta: {
+          columns: ['方案', '精度', '时延'],
+          rows: [
+            ['基线方法', '88%', '120ms'],
+            ['本方法', '91%', '95ms'],
+          ],
+        },
+      },
+      {
+        block_type: 'flow',
+        content: '',
+        items: [],
+        meta: {
+          steps: ['输入预处理', '双路编码', '门控融合', '结果输出'],
+        },
+      },
+      { block_type: 'speaker_note', content: '先对比指标，再解释流程。', items: [] },
+    ];
+  }
+
+  if (mode === 'reveal-layout') {
+    state.slides.slides_dsl.pages[0].layout_hint = 'split-evidence';
   }
 
   await page.addInitScript(() => {
@@ -198,6 +268,13 @@ async function mockSlidesApi(page: Page, mode: FlowMode) {
   });
 
   await page.route('**/api/assets/asset-e2e/slides', async (route: Route) => {
+    state.slidesFetchCalls += 1;
+    if (mode === 'schema-rebuilding-then-ready' && state.slidesFetchCalls >= 4) {
+      state.slides.slides_status = 'ready';
+      state.slides.rebuilding = false;
+      state.slides.rebuild_reason = null;
+      state.slides.slides_dsl = buildSlidesSnapshot().slides_dsl;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -268,7 +345,7 @@ async function mockSlidesApi(page: Page, mode: FlowMode) {
 test('auto page waits then resumes when next tts becomes ready', async ({ page }) => {
   await mockSlidesApi(page, 'auto-resume');
 
-  await page.goto('/workspace/asset-e2e/slides');
+  await page.goto('/workspace/asset-e2e/slides?runtime=legacy');
   await expect(page.getByRole('heading', { name: 'Spec12 E2E Asset' })).toBeVisible();
 
   await page.getByRole('button', { name: '播放' }).click();
@@ -279,7 +356,7 @@ test('auto page waits then resumes when next tts becomes ready', async ({ page }
 test('shows retry-next action when next page generation fails', async ({ page }) => {
   await mockSlidesApi(page, 'next-failed');
 
-  await page.goto('/workspace/asset-e2e/slides');
+  await page.goto('/workspace/asset-e2e/slides?runtime=legacy');
   await page.getByRole('button', { name: '播放' }).click();
 
   await expect(page.getByRole('button', { name: '重试下一页' })).toBeVisible({ timeout: 10000 });
@@ -291,9 +368,49 @@ test('shows retry-next action when next page generation fails', async ({ page })
 test('shows retrying hint when current page tts is auto retrying', async ({ page }) => {
   await mockSlidesApi(page, 'current-retrying');
 
-  await page.goto('/workspace/asset-e2e/slides');
+  await page.goto('/workspace/asset-e2e/slides?runtime=legacy');
 
   await expect(page.getByText('自动重试中（2/5）')).toBeVisible();
+});
+
+test('shows auto rebuilding hint when legacy slides are upgrading', async ({ page }) => {
+  await mockSlidesApi(page, 'schema-rebuilding');
+
+  await page.goto('/workspace/asset-e2e/slides?runtime=legacy');
+
+  await expect(page.getByText('检测到旧版演示结构，系统正在自动升级重建，请稍后自动刷新。')).toBeVisible();
+});
+
+test('auto refreshes and recovers when schema rebuilding completes', async ({ page }) => {
+  await mockSlidesApi(page, 'schema-rebuilding-then-ready');
+
+  await page.goto('/workspace/asset-e2e/slides?runtime=legacy');
+
+  await expect(page.getByRole('heading', { name: /问题背景/ })).toBeVisible({ timeout: 10000 });
+});
+
+test('renders diagram svg block with script stripped', async ({ page }) => {
+  await mockSlidesApi(page, 'diagram-svg');
+
+  page.on('dialog', async (dialog) => {
+    throw new Error(`unexpected dialog: ${dialog.message()}`);
+  });
+
+  await page.goto('/workspace/asset-e2e/slides?runtime=legacy');
+  await expect(page.locator('.slides-diagram svg')).toBeVisible();
+  await expect(page.locator('.slides-diagram script')).toHaveCount(0);
+});
+
+test('renders specialized comparison and flow blocks', async ({ page }) => {
+  await mockSlidesApi(page, 'flow-comparison');
+
+  await page.goto('/workspace/asset-e2e/slides?runtime=legacy');
+
+  await expect(page.locator('.slides-comparison')).toBeVisible();
+  await expect(page.locator('.slides-flow')).toBeVisible();
+  await expect(page.getByText('方案')).toBeVisible();
+  await expect(page.getByText('本方法')).toBeVisible();
+  await expect(page.getByText('门控融合')).toBeVisible();
 });
 
 test('shows slides retry summary on workspace status card', async ({ page }) => {
@@ -414,4 +531,20 @@ test('shows slides retry summary on workspace status card', async ({ page }) => 
 
   await page.goto('/workspace/asset-e2e');
   await expect(page.getByText('Slides 重试中（2/5）').first()).toBeVisible();
+});
+
+test('uses reveal runtime by default for slides route', async ({ page }) => {
+  await mockSlidesApi(page, 'auto-resume');
+
+  await page.goto('/workspace/asset-e2e/slides');
+
+  await expect(page.locator('.reveal-stage .reveal')).toBeVisible();
+});
+
+test('applies reveal layout class from page layout hint', async ({ page }) => {
+  await mockSlidesApi(page, 'reveal-layout');
+
+  await page.goto('/workspace/asset-e2e/slides');
+
+  await expect(page.locator('.reveal .slides .reveal-page.layout-split-evidence').first()).toBeVisible();
 });

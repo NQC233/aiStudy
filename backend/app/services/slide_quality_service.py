@@ -9,17 +9,86 @@ from app.schemas.slide_dsl import (
 )
 
 _TEMPLATE_ALLOWLIST = {
-    "problem_statement",
-    "method_overview",
-    "mechanism_deep_dive",
-    "experiment_results",
-    "conclusion_takeaways",
-    "generic_explain",
+    "topic_deep_dive",
+    "comparison_matrix",
+    "flow_explain",
+    "diagram_explain",
+    "takeaway_wrapup",
 }
+
+_TITLE_MAX_CHARS = 34
+_KEY_POINT_ITEM_MAX_CHARS = 64
+_EVIDENCE_ITEM_MAX_CHARS = 96
+_SPEAKER_NOTE_MAX_CHARS = 220
+_PAGE_DENSITY_MAX_CHARS = 360
+_VERBATIM_SNIPPET_MIN_CHARS = 42
+
+
+def _overflow_risks(page) -> list[str]:
+    risks: list[str] = []
+
+    title_block = next((b for b in page.blocks if b.block_type == "title"), None)
+    key_points_block = next((b for b in page.blocks if b.block_type == "key_points"), None)
+    evidence_block = next((b for b in page.blocks if b.block_type == "evidence"), None)
+    speaker_note_block = next((b for b in page.blocks if b.block_type == "speaker_note"), None)
+
+    if title_block and len(title_block.content.strip()) > _TITLE_MAX_CHARS:
+        risks.append("title_too_long")
+
+    key_points_items = key_points_block.items if key_points_block else []
+    evidence_items = evidence_block.items if evidence_block else []
+    if any(len(item.strip()) > _KEY_POINT_ITEM_MAX_CHARS for item in key_points_items):
+        risks.append("key_point_too_long")
+    if any(len(item.strip()) > _EVIDENCE_ITEM_MAX_CHARS for item in evidence_items):
+        risks.append("evidence_too_long")
+
+    density_chars = sum(len(item.strip()) for item in key_points_items) + sum(
+        len(item.strip()) for item in evidence_items
+    )
+    if density_chars > _PAGE_DENSITY_MAX_CHARS:
+        risks.append("page_density_too_high")
+
+    if speaker_note_block and len(speaker_note_block.content.strip()) > _SPEAKER_NOTE_MAX_CHARS:
+        risks.append("speaker_note_too_long")
+
+    return risks
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join((value or "").lower().split())
+
+
+def _has_verbatim_copy_risk(page) -> bool:
+    evidence_block = next((b for b in page.blocks if b.block_type == "evidence"), None)
+    key_points_block = next((b for b in page.blocks if b.block_type == "key_points"), None)
+    combined_content = _normalize_text(
+        " ".join((key_points_block.items if key_points_block else []) + (evidence_block.items if evidence_block else []))
+    )
+    if not combined_content:
+        return False
+
+    for citation in page.citations:
+        quote = _normalize_text(citation.quote)
+        if len(quote) < _VERBATIM_SNIPPET_MIN_CHARS:
+            continue
+        probe = quote[: min(len(quote), 96)]
+        if probe and probe in combined_content:
+            return True
+    return False
 
 
 def validate_slides_must_pass(slides_dsl: SlidesDslPayload) -> MustPassReport:
     issues: list[MustPassIssue] = []
+    if len(slides_dsl.pages) < 8 or len(slides_dsl.pages) > 16:
+        issues.append(
+            MustPassIssue(
+                page_index=-1,
+                field="page_count",
+                code="invalid_page_count",
+                message="page_count 必须在 8~16 之间",
+            )
+        )
+
     for index, page in enumerate(slides_dsl.pages):
         if page.template_type not in _TEMPLATE_ALLOWLIST:
             issues.append(
@@ -39,6 +108,68 @@ def validate_slides_must_pass(slides_dsl: SlidesDslPayload) -> MustPassReport:
                     message="blocks 不能为空",
                 )
             )
+
+        title_blocks = [b for b in page.blocks if b.block_type == "title" and b.content]
+        key_point_blocks = [b for b in page.blocks if b.block_type == "key_points"]
+        evidence_blocks = [b for b in page.blocks if b.block_type == "evidence"]
+        speaker_note_blocks = [b for b in page.blocks if b.block_type == "speaker_note"]
+
+        if len(title_blocks) != 1:
+            issues.append(
+                MustPassIssue(
+                    page_index=index,
+                    field="title",
+                    code="invalid_title_count",
+                    message="每页必须且仅能有一个 title",
+                )
+            )
+
+        overflow_risks = _overflow_risks(page)
+        if overflow_risks:
+            issues.append(
+                MustPassIssue(
+                    page_index=index,
+                    field="layout_fit",
+                    code="overflow_risk",
+                    message=f"存在视口溢出风险: {', '.join(overflow_risks)}",
+                )
+            )
+
+        key_points_count = len(key_point_blocks[0].items) if key_point_blocks else 0
+        if key_points_count < 2 or key_points_count > 4:
+            issues.append(
+                MustPassIssue(
+                    page_index=index,
+                    field="key_points",
+                    code="invalid_key_points_density",
+                    message="key_points 条数必须在 2~4",
+                )
+            )
+
+        evidence_count = len(evidence_blocks[0].items) if evidence_blocks else 0
+        if evidence_count < 1:
+            issues.append(
+                MustPassIssue(
+                    page_index=index,
+                    field="evidence",
+                    code="missing_evidence",
+                    message="每页至少一个 evidence",
+                )
+            )
+
+        has_speaker_note = bool(
+            speaker_note_blocks and speaker_note_blocks[0].content.strip()
+        )
+        if not has_speaker_note:
+            issues.append(
+                MustPassIssue(
+                    page_index=index,
+                    field="speaker_note",
+                    code="missing_speaker_note",
+                    message="speaker_note 不得为空",
+                )
+            )
+
         if not page.citations:
             issues.append(
                 MustPassIssue(
@@ -46,6 +177,16 @@ def validate_slides_must_pass(slides_dsl: SlidesDslPayload) -> MustPassReport:
                     field="citations",
                     code="missing_citations",
                     message="citations 不能为空",
+                )
+            )
+
+        if _has_verbatim_copy_risk(page):
+            issues.append(
+                MustPassIssue(
+                    page_index=index,
+                    field="content_rewrite",
+                    code="verbatim_copy_risk",
+                    message="展示内容疑似直接复制引用原文，需改写为讲解表达。",
                 )
             )
         for citation in page.citations:
@@ -62,14 +203,16 @@ def validate_slides_must_pass(slides_dsl: SlidesDslPayload) -> MustPassReport:
     return MustPassReport(passed=len(issues) == 0, issues=issues)
 
 
-def _score_page_density(block_count: int) -> float:
-    if block_count >= 4:
-        return 30.0
-    if block_count == 3:
-        return 22.0
-    if block_count == 2:
-        return 14.0
-    return 6.0
+def _score_page_density(key_points_count: int, evidence_count: int) -> float:
+    score = 0.0
+    if 2 <= key_points_count <= 4:
+        score += 25.0
+    elif key_points_count == 1:
+        score += 10.0
+
+    if evidence_count >= 1:
+        score += 20.0
+    return score
 
 
 def evaluate_slides_quality(
@@ -79,43 +222,66 @@ def evaluate_slides_quality(
     page_scores: list[PageQualityScore] = []
     duplicate_key_count: dict[str, int] = {}
 
-    normalized_evidence: list[str] = []
+    normalized_content: list[str] = []
     for page in slides_dsl.pages:
-        evidence_content = " ".join(
-            block.content.strip().lower()
-            for block in page.blocks
-            if block.block_type in {"evidence", "goal", "script"}
+        key = " ".join(
+            [
+                " ".join(block.items).strip().lower()
+                if block.items
+                else block.content.strip().lower()
+                for block in page.blocks
+                if block.block_type in {"key_points", "evidence", "speaker_note"}
+            ]
         )
-        normalized_evidence.append(evidence_content)
-        duplicate_key_count[evidence_content] = (
-            duplicate_key_count.get(evidence_content, 0) + 1
-        )
+        normalized_content.append(key)
+        duplicate_key_count[key] = duplicate_key_count.get(key, 0) + 1
 
     for index, page in enumerate(slides_dsl.pages):
         reasons: list[str] = []
         score = 0.0
 
-        score += _score_page_density(len(page.blocks))
+        key_points_block = next(
+            (block for block in page.blocks if block.block_type == "key_points"),
+            None,
+        )
+        evidence_block = next(
+            (block for block in page.blocks if block.block_type == "evidence"),
+            None,
+        )
+        speaker_note_block = next(
+            (block for block in page.blocks if block.block_type == "speaker_note"),
+            None,
+        )
+
+        key_points_count = len(key_points_block.items) if key_points_block else 0
+        evidence_count = len(evidence_block.items) if evidence_block else 0
+
+        score += _score_page_density(key_points_count, evidence_count)
         if len(page.citations) >= 1:
-            score += 30.0
+            score += 25.0
         else:
             reasons.append("缺少引用锚点")
 
-        has_goal = any(
-            block.block_type == "goal" and block.content for block in page.blocks
-        )
-        has_script = any(
-            block.block_type == "script" and block.content for block in page.blocks
-        )
-        if has_goal and has_script:
-            score += 25.0
+        speaker_note_text = speaker_note_block.content.strip() if speaker_note_block else ""
+        if speaker_note_text:
+            note_len = len(speaker_note_text)
+            score += 25.0 if note_len >= 18 else 12.0
         else:
-            reasons.append("讲解目标或讲稿缺失")
+            reasons.append("讲稿缺失")
 
-        evidence_key = normalized_evidence[index]
+        evidence_key = normalized_content[index]
         if duplicate_key_count.get(evidence_key, 0) > 1:
             score -= 10.0
             reasons.append("与其他页面内容重复度较高")
+
+        overflow_risks = _overflow_risks(page)
+        if overflow_risks:
+            score -= 35.0
+            reasons.append(f"存在视口溢出风险: {', '.join(overflow_risks)}")
+
+        if _has_verbatim_copy_risk(page):
+            score -= 20.0
+            reasons.append("展示内容疑似直接复制引用原文")
 
         if not reasons:
             reasons.append("质量达标")

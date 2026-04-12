@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 
 from app.schemas.reader import ParsedDocumentPayload
 from app.services.slide_lesson_plan_service import (
-    LESSON_PLAN_PLACEHOLDER_SCRIPT,
+    _is_low_signal_quote,
     build_lesson_plan_summary,
     build_stage_lesson_plan,
     can_enqueue_lesson_plan_rebuild,
@@ -21,6 +21,14 @@ from app.services.slide_lesson_plan_service import (
 
 
 class SlideLessonPlanServiceTests(unittest.TestCase):
+    def test_low_signal_quote_filters_google_authorization_clause(self) -> None:
+        self.assertTrue(
+            _is_low_signal_quote(
+                "Provided proper attribution is provided, Google hereby grants permission to reproduce the..."
+            )
+        )
+        self.assertFalse(_is_low_signal_quote("Transformer 在多个翻译任务上超过 RNN 基线。"))
+
     def test_build_stage_lesson_plan_covers_five_story_stages(self) -> None:
         payload = ParsedDocumentPayload.model_validate(
             {
@@ -138,10 +146,10 @@ class SlideLessonPlanServiceTests(unittest.TestCase):
             all(len(stage.evidence_anchors) >= 1 for stage in lesson_plan.stages)
         )
         self.assertTrue(
-            all(
-                stage.script == LESSON_PLAN_PLACEHOLDER_SCRIPT
-                for stage in lesson_plan.stages
-            )
+            all("Spec 11B/11C" not in stage.script for stage in lesson_plan.stages)
+        )
+        self.assertTrue(
+            all(not stage.goal.startswith("完成“") for stage in lesson_plan.stages)
         )
 
     def test_lesson_plan_summary_contains_anchor_counts(self) -> None:

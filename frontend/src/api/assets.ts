@@ -355,11 +355,18 @@ export interface SlideDslCitation {
 export interface SlideDslBlock {
   block_type: string;
   content: string;
+  items: string[];
+  svg_content?: string | null;
+  meta?: Record<string, unknown>;
 }
 
 export interface SlideDslPage {
   slide_key: string;
   stage: string;
+  page_type: string;
+  layout_hint: string;
+  director_source: 'rule' | 'llm';
+  visual_tone: 'editorial' | 'technical' | 'spotlight' | 'warm';
   template_type: string;
   animation_preset: string;
   blocks: SlideDslBlock[];
@@ -367,6 +374,7 @@ export interface SlideDslPage {
 }
 
 export interface SlidesDslPayload {
+  schema_version: '2';
   asset_id: string;
   version: number;
   generated_at: string;
@@ -466,6 +474,9 @@ export interface SlidePlaybackPlan {
 export interface AssetSlidesResponse {
   asset_id: string;
   slides_status: string;
+  schema_version: string | null;
+  rebuilding: boolean;
+  rebuild_reason: string | null;
   tts_status: 'not_generated' | 'processing' | 'ready' | 'failed' | 'partial';
   playback_status: 'not_ready' | 'ready';
   auto_page_supported: boolean;
@@ -783,7 +794,7 @@ export function fetchAssetSlides(assetId: string): Promise<AssetSlidesResponse> 
 
 export async function rebuildAssetSlides(
   assetId: string,
-  strategy: 'template' | 'llm' = 'template',
+  strategy: 'template' | 'llm' = 'llm',
 ): Promise<AssetLessonPlanRebuildResponse> {
   const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/slides/lesson-plan/rebuild`, {
     method: 'POST',
