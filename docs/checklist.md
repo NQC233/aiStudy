@@ -1535,6 +1535,37 @@
 - 建议提交信息：
   - `feat: add reveal runtime for slides playback with legacy fallback`
 
+### Spec 15.1 交付记录（第 2 轮：LLM 导演提示与布局分化）
+
+- 完成内容：
+  - 新增 `slide_director_plan_service`，支持 LLM 优先、规则兜底的页面导演提示（layout/animation/target block）。
+  - `slides_dsl` 页面新增 `layout_hint` 与 `director_source` 字段，编译阶段按导演提示写入。
+  - `slide_dsl_service` 在 template/llm 两条链路均接入导演计划，减少全稿同布局同动画。
+  - Reveal 渲染层接入 `layout_hint` class，新增 `split-evidence/process-steps/data-table` 等布局样式分化。
+  - Playwright 新增 layout hint 可见性测试，验证导演提示到前端样式的闭环。
+- 主要新增或修改文件：
+  - `backend/app/services/slide_director_plan_service.py`
+  - `backend/app/services/llm_service.py`
+  - `backend/app/services/slide_dsl_service.py`
+  - `backend/app/services/slide_dsl_compiler_service.py`
+  - `backend/app/schemas/slide_dsl.py`
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/components/slides/RevealSlidesDeck.vue`
+  - `frontend/tests/e2e/spec12-playback.spec.ts`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_spec15_slides_pipeline.py tests/test_slide_dsl_quality_flow.py tests/test_slide_lesson_plan_service.py -v` 已通过（22 tests）
+  - `cd frontend && npm run test:e2e:spec12` 已通过（10 tests）
+  - `cd frontend && npm run build` 已通过
+- 当前已知缺口：
+  - Reveal 仍未做懒加载拆包，bundle 体积较大
+  - LLM 导演提示尚未加入 overflow critic 与自动重写闭环
+- 下一轮建议：
+  - 进入 Spec 15.1 第 3 轮：引入页面溢出检查与页级重写策略，避免内容截断
+- 建议提交信息：
+  - `feat: add llm-guided slide director hints and reveal layout variants`
+
 ### Spec 15 交付记录（第 7 轮：展示文案去备课层化）
 
 - 完成内容：
@@ -1576,6 +1607,161 @@
   - 引入“展示稿-讲稿一致性 + 跨页重复率”联合门禁，并在生成阶段增加句式多样化重写。
 - 建议提交信息：
   - `fix: remove legacy lesson-plan placeholder script and reduce templated slide copy`
+
+### Spec 15 交付记录（第 9 轮：低信号证据过滤修复）
+
+- 完成内容：
+  - 修复低信号证据过滤逻辑：当某 stage 证据全为低信号时，不再回填被过滤掉的原始噪声证据。
+  - 新增针对 Google 授权条款文案的过滤单测，防止“授权声明”再次进入讲稿与展示内容。
+  - 重新构建 `backend/worker` 并对 `Mamba` 与 `Attention Is All You Need` 重新触发 llm 演示生成。
+- 主要新增或修改文件：
+  - `backend/app/services/slide_lesson_plan_service.py`
+  - `backend/tests/test_slide_lesson_plan_service.py`
+  - `docs/checklist.md`
+- 验证结果：
+  - `cd backend && .venv/bin/python -m unittest tests/test_slide_lesson_plan_service.py tests/test_spec15_slides_pipeline.py tests/test_slide_dsl_quality_flow.py -v` 已通过（21 tests）
+  - 线上状态核验：`Mamba` 与 `Attention Is All You Need` 均已 `slides_status=ready` 且 `applied_strategy=llm`
+- 当前已知缺口：
+  - 规则链路仍偏模板化，跨页语义多样性不足
+- 下一轮建议：
+  - 推进 Spec 15.1 第 2 轮：引入 LLM 主导的 `slide_director_plan`，由模型决定 layout/动画/信息密度，再编译到 Reveal.js
+- 建议提交信息：
+  - `fix: block low-signal evidence quotes from lesson-plan scripts`
+
+### Spec 15.1 交付记录（第 3 轮：证据去直拷与默认策略纠偏）
+
+- 完成内容：
+  - `slide_markdown_service` 增加证据蒸馏逻辑，英文长证据不再直接进入 key_points/evidence，改为中文证据说明，减少“原文直拷 + 截断省略号”。
+  - `slides/lesson-plan/rebuild` 默认策略由 `template` 调整为 `llm`（请求/响应 schema 同步）。
+  - legacy 自动升级重建链路改为按 `slides_llm_enabled` 自动选择策略，不再固定 `template`。
+  - 前端 `rebuildAssetSlides` 默认策略改为 `llm`，播放页恢复入口显式走 `llm`。
+- 主要新增或修改文件：
+  - `backend/app/services/slide_markdown_service.py`
+  - `backend/app/schemas/slide_lesson_plan.py`
+  - `backend/app/api/routes/assets.py`
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/pages/workspace/WorkspacePage.vue`
+  - `frontend/src/pages/slides/SlidesPlayPage.vue`
+  - `docs/specs/spec-15.1-reveal-runtime-migration.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `docker compose exec -T -w /app backend python -m unittest tests.test_spec15_slides_pipeline` 已通过（12 tests）。
+  - `docker compose exec -T -w /app backend python -m unittest tests.test_slide_dsl_quality_flow tests.test_slide_lesson_plan_service` 已通过（13 tests）。
+  - `docker compose exec -T -w /app frontend npm run build` 已通过。
+- 当前已知缺口：
+  - 尚未实现 overflow critic + 页级自动重写，复杂页仍可能信息密度过高。
+  - Reveal runtime 仍未做懒加载拆包，产物体积偏大。
+- 下一轮建议：
+  - 进入 Spec 15.1 第 4 轮：增加 overflow 检测、自动拆页/改写与 must-pass 质量门禁。
+- 建议提交信息：
+  - `fix: reduce verbatim evidence copy and default slide rebuild to llm`
+
+### Spec 15.1 交付记录（第 4 轮：worker 重启丢任务与排队卡死修复）
+
+- 完成内容：
+  - 通过 worker 日志定位到卡死根因：`enqueue_generate_asset_slides_dsl` 任务被 worker `received` 后发生 warm shutdown，任务未完成且未回队，资产状态停留在 `processing`。
+  - Celery 增加可靠性配置：`task_acks_late=True`、`task_reject_on_worker_lost=True`、`worker_prefetch_multiplier=1`、`visibility_timeout=7200`。
+  - 触发 `Attention Is All You Need` 的陈旧 processing 回收重建，确认从 `processing` 恢复到 `ready`。
+  - 安装了外部参考 skill：`frontend-slides`（通过 `npx skills add ... --skill frontend-slides -g -y`）。
+- 主要新增或修改文件：
+  - `backend/app/workers/celery_app.py`
+  - `backend/app/core/config.py`
+  - `docs/specs/spec-15.1-reveal-runtime-migration.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `docker compose exec -T -w /app backend python -m unittest tests.test_spec15_slides_pipeline tests.test_slide_dsl_quality_flow tests.test_slide_lesson_plan_service` 已通过（25 tests）。
+  - worker 运行时配置核验通过（acks_late/reject_on_worker_lost/prefetch/visibility_timeout）。
+  - `Attention Is All You Need` 实测恢复 `slides_status=ready`。
+- 当前已知缺口：
+  - 仅修复了任务可靠性与卡死问题，未触及更深层内容导演与溢出重写质量闭环。
+- 下一轮建议：
+  - 进入 Spec 15.1 第 5 轮：实现 overflow critic + 自动拆页重写 + 进度可视化（避免“长期 processing 无反馈”）。
+- 建议提交信息：
+  - `fix: prevent slide generation task loss on worker restart`
+
+### Spec 15.1 交付记录（第 5 轮：页数估算去“16页吸附”）
+
+- 完成内容：
+  - 修复页数估算策略：从 `8 + evidence_count` 的线性模型改为多因子模型（证据量 + 证据页分布 + 高密度 stage），避免常见文稿被 16 页上限吸附。
+  - 新增单测，覆盖“常见证据密度下不应固定 16 页”的场景。
+  - 实际资产验证：`Attention Is All You Need` 重新生成后页数由 16 降为 11，且保持 `llm -> llm` 生成链路。
+- 主要新增或修改文件：
+  - `backend/app/services/slide_outline_service.py`
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `docs/specs/spec-15.1-reveal-runtime-migration.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `docker compose exec -T -w /app backend python -m unittest tests.test_spec15_slides_pipeline tests.test_slide_dsl_quality_flow tests.test_slide_lesson_plan_service` 已通过（26 tests）。
+  - 实测 `Attention Is All You Need` 重建后 `page_count=11`，`slides_status=ready`。
+- 当前已知缺口：
+  - 页数估算已改善，但尚未接入“内容溢出驱动的自动拆页重写”。
+- 下一轮建议：
+  - 进入 Spec 15.1 第 6 轮：实现 overflow critic + auto split + 失败页重写闭环。
+- 建议提交信息：
+  - `fix: rebalance slide page-count estimation to avoid hard 16-page bias`
+
+### Spec 15.1 交付记录（第 6 轮：frontend-slides 约束落地到生成质量门禁）
+
+- 完成内容：
+  - 引入视口密度门禁（`overflow_risk`）：在 must-pass 校验中增加标题长度、要点长度、证据长度、讲稿长度、页密度上限检查。
+  - 质量评分加入溢出惩罚，驱动高密度页面进入 `low_quality_pages`。
+  - 修复器升级：对过长文本做裁剪，并在页数预算允许时自动插入 `:cont` 续页，避免单页过载。
+  - 新增回归测试：
+    - `test_must_pass_flags_overflow_risk_for_long_blocks`
+    - `test_repair_splits_overflow_page_within_budget`
+- 主要新增或修改文件：
+  - `backend/app/services/slide_quality_service.py`
+  - `backend/app/services/slide_fix_service.py`
+  - `backend/tests/test_slide_dsl_quality_flow.py`
+  - `docs/specs/spec-15.1-reveal-runtime-migration.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `docker compose exec -T -w /app backend python -m unittest tests.test_slide_dsl_quality_flow tests.test_spec15_slides_pipeline tests.test_slide_lesson_plan_service` 已通过（28 tests）。
+  - `Attention Is All You Need` 重建验证：`slides_status=ready`、`page_count=11`、`must_pass_report.passed=true`。
+- 当前已知缺口：
+  - 拆页仍为规则切分，未做 LLM 语义重写。
+  - 未接入前端真实渲染高度反馈进行二次修复。
+- 下一轮建议：
+  - 进入 Spec 15.1 第 7 轮：实现“估算 + 浏览器实测”双通道 overflow critic，并将实测结果纳入 repair 闭环。
+- 建议提交信息：
+  - `feat: add viewport-density critic and overflow page splitting for slides`
+
+### Spec 15.1 交付记录（第 7 轮：导演视觉语气与反直拷门禁）
+
+- 完成内容：
+  - `slides_dsl` 页面层新增 `visual_tone` 字段（`editorial/technical/spotlight/warm`），并由导演计划统一产出。
+  - `generate_slides_director_hint` 提示词引入 frontend-slides 约束（无滚动、信息预算、差异化视觉语气）。
+  - 导演计划新增 tone 重平衡机制：当 LLM 输出语气单一时自动分配多语气，避免全稿风格单调。
+  - must-pass 新增 `verbatim_copy_risk` 检测，阻断“引用原文长句直接贴到展示稿”。
+  - Reveal 渲染新增按 tone 的视觉样式（背景、纹理、色调）以提升演示美观度与区分度。
+  - 新增回归测试：
+    - `test_director_plan_assigns_visual_tones`
+    - `test_must_pass_flags_verbatim_copy_risk_from_citation_quote`
+    - `test_director_plan_rebalances_visual_tone_when_llm_returns_single_tone`
+- 主要新增或修改文件：
+  - `backend/app/schemas/slide_dsl.py`
+  - `backend/app/services/slide_director_plan_service.py`
+  - `backend/app/services/llm_service.py`
+  - `backend/app/services/slide_dsl_compiler_service.py`
+  - `backend/app/services/slide_quality_service.py`
+  - `backend/tests/test_spec15_slides_pipeline.py`
+  - `backend/tests/test_slide_dsl_quality_flow.py`
+  - `frontend/src/api/assets.ts`
+  - `frontend/src/components/slides/RevealSlidesDeck.vue`
+  - `docs/specs/spec-15.1-reveal-runtime-migration.md`
+  - `docs/checklist.md`
+- 验证结果：
+  - `docker compose exec -T -w /app backend python -m unittest tests.test_slide_dsl_quality_flow tests.test_spec15_slides_pipeline tests.test_slide_lesson_plan_service` 已通过（31 tests）。
+  - `docker compose exec -T -w /app frontend npm run build` 已通过。
+  - `Attention Is All You Need` 重建验证：`page_count=11`，tone 分布为 `editorial/technical/spotlight`，`must_pass_report.passed=true`。
+- 当前已知缺口：
+  - 仍缺少前端真实渲染高度反馈驱动的二次重写。
+  - Tone 分配为规则重平衡，尚未做全局演示叙事风格优化。
+- 下一轮建议：
+  - 进入 Spec 15.1 第 8 轮：加入“渲染实测 overflow critic + 自动重写”闭环。
+- 建议提交信息：
+  - `feat: enforce director visual tones and verbatim-copy guard for slides`
 
 ## 7. 相关文档
 

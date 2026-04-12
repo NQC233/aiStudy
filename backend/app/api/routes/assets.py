@@ -214,7 +214,8 @@ def get_asset_slides_endpoint(
     if settings.slides_auto_upgrade_legacy_dsl_enabled:
         asset, should_enqueue, _ = ensure_asset_slides_schema_up_to_date(db, asset_id)
         if should_enqueue:
-            enqueue_generate_asset_lesson_plan.delay(asset.id, strategy="template")
+            strategy = "llm" if settings.slides_llm_enabled else "template"
+            enqueue_generate_asset_lesson_plan.delay(asset.id, strategy=strategy)
             auto_rebuild_enqueued = True
 
     snapshot = get_asset_slides_snapshot(db, asset_id)

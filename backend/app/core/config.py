@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     celery_task_retry_backoff_sec: int = 5
     celery_task_retry_backoff_max_sec: int = 120
     celery_task_retry_jitter: bool = True
+    celery_visibility_timeout_sec: int = 7200
+    celery_worker_prefetch_multiplier: int = 1
 
     aliyun_oss_endpoint: str | None = None
     aliyun_oss_bucket: str | None = None

@@ -253,8 +253,9 @@ def _build_slides_stage_prompt(
     evidence_block = "\n".join(evidence_lines) if evidence_lines else "[1] 无可用证据"
     return (
         "你是论文演示文稿编辑器。请基于证据生成单页内容，不得虚构事实。\n"
-        "输出必须是 JSON 对象，仅包含 title/goal/script/evidence 四个字段。\n"
-        "约束：title<=24字，goal<=42字，script<=180字，evidence<=160字。\n"
+        "输出必须是 JSON 对象，字段为：title,goal,script,evidence,key_points,evidence_list,takeaway。\n"
+        "约束：title<=24字，goal<=42字，script<=180字，evidence<=160字，"
+        "key_points 为 2~4 条、每条<=32字，evidence_list 为 1~2 条、每条<=60字，takeaway<=42字。\n"
         "\n"
         f"stage={stage}\n"
         f"原始标题={title}\n"
@@ -359,9 +360,123 @@ def generate_slides_stage_copy(
         str(data.get("evidence", evidence_default)).strip() or evidence_default
     )
 
+    def _normalize_list(raw_value: Any, fallback_items: Sequence[str], max_items: int) -> list[str]:
+        if isinstance(raw_value, list):
+            normalized = [str(item).strip() for item in raw_value if str(item).strip()]
+            if normalized:
+                return normalized[:max_items]
+        fallback = [item.strip() for item in fallback_items if item and item.strip()]
+        return fallback[:max_items]
+
+    normalized_key_points = _normalize_list(
+        data.get("key_points"),
+        [goal],
+        max_items=4,
+    )
+    if len(normalized_key_points) < 2:
+        normalized_key_points = [*normalized_key_points, _clip_text(normalized_evidence, limit=32)]
+    normalized_key_points = [
+        _clip_text(point, limit=32)
+        for point in normalized_key_points[:4]
+        if point.strip()
+    ]
+
+    normalized_evidence_list = _normalize_list(
+        data.get("evidence_list"),
+        [normalized_evidence],
+        max_items=2,
+    )
+    normalized_evidence_list = [
+        _clip_text(item, limit=60)
+        for item in normalized_evidence_list
+        if item.strip()
+    ]
+
+    normalized_takeaway = str(data.get("takeaway", "")).strip()
+    if not normalized_takeaway:
+        normalized_takeaway = normalized_goal or "总结结论并回扣论文主线。"
+
     return {
         "title": _clip_text(normalized_title, limit=24),
         "goal": _clip_text(normalized_goal, limit=42),
         "script": _clip_text(normalized_script, limit=180),
         "evidence": _clip_text(normalized_evidence, limit=160),
+        "key_points": normalized_key_points,
+        "evidence_list": normalized_evidence_list,
+        "takeaway": _clip_text(normalized_takeaway, limit=42),
+    }
+
+
+def generate_slides_director_hint(page: Any) -> dict[str, str]:
+    """调用 LLM 为单页生成布局和动画提示。"""
+    api_key, base_url, model_name = _ensure_chat_configuration()
+    page_type = str(getattr(page, "page_type", "topic"))
+    title = str(getattr(page, "title", ""))
+    key_points = getattr(page, "key_points", []) or []
+    evidence = getattr(page, "evidence", []) or []
+
+    user_prompt = (
+        "你是 Reveal.js 演示导演。必须满足 frontend-slides 风格约束：\n"
+        "1) 单页信息必须可在一个视口内读完（禁止滚动）\n"
+        "2) 一页最多 4 条 key_points 与 2 条 evidence\n"
+        "3) 视觉风格要有区分度，避免所有页同质化\n"
+        "返回 JSON 对象，字段仅包含 layout_hint, animation_type, target_block_type, visual_tone。\n"
+        "layout_hint 可选：hero-left, split-evidence, insight-stack, data-table, process-steps, visual-focus, closing-cta。\n"
+        "animation_type 可选：stagger_reveal, focus_emphasis, compare_switch, flow_step。\n"
+        "target_block_type 可选：key_points, evidence, comparison, flow, diagram_svg, takeaway。\n"
+        "visual_tone 可选：editorial, technical, spotlight, warm。\n"
+        f"page_type={page_type}\n"
+        f"title={title}\n"
+        f"key_points={json.dumps(key_points, ensure_ascii=False)}\n"
+        f"evidence={json.dumps(evidence, ensure_ascii=False)}\n"
+    )
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": "你是严谨的演示设计助手，输出必须是 JSON。"},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }
+
+    request = Request(
+        url=base_url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=settings.dashscope_chat_timeout_sec) as response:
+            raw_body = response.read()
+    except HTTPError as exc:
+        raw_error = exc.read().decode("utf-8", errors="ignore")
+        raise LLMRequestError(f"布局规划请求失败：HTTP {exc.code} {raw_error}") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise LLMRequestError("布局规划超时，请稍后重试。") from exc
+    except URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            raise LLMRequestError("布局规划超时，请稍后重试。") from exc
+        raise LLMRequestError("布局规划服务不可达，请检查网络或配置。") from exc
+
+    try:
+        response_json = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LLMRequestError("布局规划响应不是合法 JSON。") from exc
+
+    message_content = _extract_message_content(response_json)
+    if not message_content:
+        raise LLMRequestError("布局规划响应缺少可用内容。")
+    data = _extract_json_object(message_content)
+
+    return {
+        "layout_hint": str(data.get("layout_hint", "")).strip(),
+        "animation_type": str(data.get("animation_type", "")).strip(),
+        "target_block_type": str(data.get("target_block_type", "")).strip(),
+        "visual_tone": str(data.get("visual_tone", "")).strip(),
     }

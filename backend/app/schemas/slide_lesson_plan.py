@@ -87,8 +87,8 @@ class AssetLessonPlanRebuildResponse(BaseModel):
     asset_id: str
     slides_status: str
     message: str
-    strategy: SlideGenerationStrategy = "template"
+    strategy: SlideGenerationStrategy = "llm"
 
 
 class AssetLessonPlanRebuildRequest(BaseModel):
-    strategy: SlideGenerationStrategy = "template"
+    strategy: SlideGenerationStrategy = "llm"

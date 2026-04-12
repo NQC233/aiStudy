@@ -11,6 +11,7 @@ from app.schemas.slide_dsl import (
     SlidesDslPayload,
 )
 from app.schemas.slide_lesson_plan import AssetLessonPlanPayload
+from app.services.slide_director_plan_service import SlideDirectorHint
 from app.services.slide_markdown_service import SlideMarkdownDraftResult
 
 
@@ -80,11 +81,13 @@ def _diagram_svg_placeholder(title: str) -> str:
 def compile_markdown_draft_to_slides_dsl(
     lesson_plan: AssetLessonPlanPayload,
     draft: SlideMarkdownDraftResult,
+    director_plan: dict[str, SlideDirectorHint] | None = None,
 ) -> SlidesDslPayload:
     stage_to_anchors = {stage.stage: stage.evidence_anchors for stage in lesson_plan.stages}
 
     pages: list[SlidePageDsl] = []
     for draft_page in draft.pages:
+        hint = (director_plan or {}).get(draft_page.slide_key)
         citations = [
             SlideCitation(
                 page_no=anchor.page_no,
@@ -143,18 +146,30 @@ def compile_markdown_draft_to_slides_dsl(
             draft_page.page_type,
             "stagger_reveal",
         )
+        if hint and hint.animation_type in {
+            "stagger_reveal",
+            "focus_emphasis",
+            "compare_switch",
+            "flow_step",
+        }:
+            animation_type = hint.animation_type
+
+        target_block_type = hint.target_block_type if hint else "key_points"
         pages.append(
             SlidePageDsl(
                 slide_key=draft_page.slide_key,
                 stage=draft_page.stage,
                 page_type=draft_page.page_type,
+                layout_hint=hint.layout_hint if hint else "hero-left",
+                director_source=hint.source if hint else "rule",
+                visual_tone=hint.visual_tone if hint else "technical",
                 template_type=_TEMPLATE_BY_PAGE_TYPE.get(draft_page.page_type, "topic_deep_dive"),
                 animation_preset=animation_type,
                 animations=[
                     SlideAnimation(
                         animation_type=animation_type,
-                        target_block_type="key_points",
-                        cue_key=f"{draft_page.slide_key}:key_points",
+                        target_block_type=target_block_type,
+                        cue_key=f"{draft_page.slide_key}:{target_block_type}",
                     )
                 ],
                 blocks=blocks,

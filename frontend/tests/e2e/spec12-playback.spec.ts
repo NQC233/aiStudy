@@ -7,7 +7,8 @@ type FlowMode =
   | 'schema-rebuilding'
   | 'schema-rebuilding-then-ready'
   | 'diagram-svg'
-  | 'flow-comparison';
+  | 'flow-comparison'
+  | 'reveal-layout';
 
 function buildAssetDetail(assetId: string) {
   const now = new Date().toISOString();
@@ -56,6 +57,8 @@ function buildSlidesSnapshot() {
           slide_key: 'slide:problem:1',
           stage: 'problem',
           page_type: 'topic',
+          layout_hint: 'hero-left',
+          director_source: 'rule',
           template_type: 'topic_deep_dive',
           animation_preset: 'stagger_reveal',
           animations: [],
@@ -71,6 +74,8 @@ function buildSlidesSnapshot() {
           slide_key: 'slide:method:2',
           stage: 'method',
           page_type: 'topic',
+          layout_hint: 'insight-stack',
+          director_source: 'rule',
           template_type: 'topic_deep_dive',
           animation_preset: 'stagger_reveal',
           animations: [],
@@ -209,6 +214,10 @@ async function mockSlidesApi(page: Page, mode: FlowMode) {
       },
       { block_type: 'speaker_note', content: '先对比指标，再解释流程。', items: [] },
     ];
+  }
+
+  if (mode === 'reveal-layout') {
+    state.slides.slides_dsl.pages[0].layout_hint = 'split-evidence';
   }
 
   await page.addInitScript(() => {
@@ -530,4 +539,12 @@ test('uses reveal runtime by default for slides route', async ({ page }) => {
   await page.goto('/workspace/asset-e2e/slides');
 
   await expect(page.locator('.reveal-stage .reveal')).toBeVisible();
+});
+
+test('applies reveal layout class from page layout hint', async ({ page }) => {
+  await mockSlidesApi(page, 'reveal-layout');
+
+  await page.goto('/workspace/asset-e2e/slides');
+
+  await expect(page.locator('.reveal .slides .reveal-page.layout-split-evidence').first()).toBeVisible();
 });

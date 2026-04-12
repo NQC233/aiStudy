@@ -9,9 +9,13 @@ if str(ROOT) not in sys.path:
 from app.schemas.slide_lesson_plan import AssetLessonPlanPayload
 from app.services.slide_dsl_service import (
     build_slides_dsl,
+    build_slides_dsl_via_llm,
     build_slides_dsl_with_strategy,
 )
 from app.services.slide_fix_service import repair_low_quality_pages
+from app.services.slide_director_plan_service import build_slide_director_plan
+from app.services.slide_markdown_service import build_slide_markdown_draft
+from app.services.slide_outline_service import build_slide_outline
 from app.services.slide_quality_service import (
     evaluate_slides_quality,
     validate_slides_must_pass,
@@ -146,6 +150,46 @@ class SlideDslQualityFlowTests(unittest.TestCase):
             )
         )
 
+    def test_must_pass_flags_overflow_risk_for_long_blocks(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+        slides_dsl = build_slides_dsl(lesson_plan)
+        key_points_block = next(
+            block for block in slides_dsl.pages[0].blocks if block.block_type == "key_points"
+        )
+        key_points_block.items = [
+            "这是一个非常长的要点说明" * 8,
+            "这是第二个非常长的要点说明" * 7,
+        ]
+
+        report = validate_slides_must_pass(slides_dsl)
+        self.assertFalse(report.passed)
+        self.assertTrue(
+            any(
+                item.page_index == 0 and item.code == "overflow_risk"
+                for item in report.issues
+            )
+        )
+
+    def test_must_pass_flags_verbatim_copy_risk_from_citation_quote(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+        slides_dsl = build_slides_dsl(lesson_plan)
+        quote = (
+            "Recurrent neural networks, long short-term memory and gated recurrent "
+            "neural networks have been firmly established as state-of-the-art approaches."
+        )
+        slides_dsl.pages[0].citations[0].quote = quote
+        evidence_block = next(
+            block for block in slides_dsl.pages[0].blocks if block.block_type == "evidence"
+        )
+        evidence_block.items = [quote]
+
+        report = validate_slides_must_pass(slides_dsl)
+
+        self.assertFalse(report.passed)
+        self.assertTrue(
+            any(item.page_index == 0 and item.code == "verbatim_copy_risk" for item in report.issues)
+        )
+
     def test_page_level_repair_improves_quality_without_regenerating_all(self) -> None:
         lesson_plan = _lesson_plan_payload()
         slides_dsl = build_slides_dsl(lesson_plan)
@@ -167,6 +211,34 @@ class SlideDslQualityFlowTests(unittest.TestCase):
         self.assertEqual(
             repaired_dsl.pages[-1].slide_key,
             slides_dsl.pages[-1].slide_key,
+        )
+
+    def test_repair_splits_overflow_page_within_budget(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+        slides_dsl = build_slides_dsl(lesson_plan)
+        first_key_points = next(
+            block for block in slides_dsl.pages[0].blocks if block.block_type == "key_points"
+        )
+        first_evidence = next(
+            block for block in slides_dsl.pages[0].blocks if block.block_type == "evidence"
+        )
+        first_key_points.items = [
+            "机制解释" * 24,
+            "实验观察" * 20,
+            "模型行为" * 20,
+            "结论约束" * 18,
+        ]
+        first_evidence.items = [
+            "证据片段" * 30,
+            "补充证据" * 26,
+        ]
+
+        before = evaluate_slides_quality(slides_dsl)
+        repaired_dsl, _ = repair_low_quality_pages(slides_dsl, lesson_plan, before)
+
+        self.assertGreater(len(repaired_dsl.pages), len(slides_dsl.pages))
+        self.assertTrue(
+            any(page.slide_key.endswith(":cont") for page in repaired_dsl.pages)
         )
 
     def test_template_strategy_emits_shadow_scaffold_meta(self) -> None:
@@ -225,6 +297,59 @@ class SlideDslQualityFlowTests(unittest.TestCase):
         self.assertEqual(shadow_report.status, "completed")
         self.assertIsNotNone(shadow_report.baseline_overall_score)
         self.assertIsNotNone(shadow_report.candidate_overall_score)
+
+    def test_llm_builder_rewrites_page_blocks_not_only_script(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+
+        def fake_llm_copy(**_kwargs):
+            return {
+                "title": "方法亮点",
+                "goal": "突出核心创新",
+                "script": "先讲核心创新，再讲收益。",
+                "evidence": "三个数据集平均提升 3.2%",
+                "key_points": ["创新点一：并行计算", "创新点二：稳定训练"],
+                "evidence_list": ["WMT14 提升 2.8 BLEU", "推理时延下降 18%"],
+                "takeaway": "创新主要来自注意力机制替代循环结构。",
+            }
+
+        from unittest.mock import patch
+
+        with (
+            patch("app.services.slide_dsl_service.generate_slides_stage_copy", side_effect=fake_llm_copy),
+            patch("app.services.slide_dsl_service.build_slide_director_plan", return_value={}),
+        ):
+            slides_dsl = build_slides_dsl_via_llm(lesson_plan)
+
+        first_page = slides_dsl.pages[0]
+        title_block = next(block for block in first_page.blocks if block.block_type == "title")
+        key_points_block = next(block for block in first_page.blocks if block.block_type == "key_points")
+        evidence_block = next(block for block in first_page.blocks if block.block_type == "evidence")
+        takeaway_block = next(block for block in first_page.blocks if block.block_type == "takeaway")
+
+        self.assertEqual(title_block.content, "方法亮点")
+        self.assertEqual(key_points_block.items, ["创新点一：并行计算", "创新点二：稳定训练"])
+        self.assertEqual(evidence_block.items, ["WMT14 提升 2.8 BLEU", "推理时延下降 18%"])
+        self.assertEqual(takeaway_block.content, "创新主要来自注意力机制替代循环结构。")
+
+    def test_director_plan_rebalances_visual_tone_when_llm_returns_single_tone(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+        draft = build_slide_markdown_draft(build_slide_outline(lesson_plan))
+
+        def single_tone_planner(_page):
+            return {
+                "layout_hint": "hero-left",
+                "animation_type": "stagger_reveal",
+                "target_block_type": "key_points",
+                "visual_tone": "technical",
+            }
+
+        plan = build_slide_director_plan(
+            draft,
+            llm_enabled=True,
+            planner=single_tone_planner,
+        )
+        tones = {hint.visual_tone for hint in plan.values()}
+        self.assertGreaterEqual(len(tones), 2)
 
 
 if __name__ == "__main__":

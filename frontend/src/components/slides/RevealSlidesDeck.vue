@@ -79,6 +79,14 @@ function keyPointClass(page: SlideDslPage): string {
   return '';
 }
 
+function layoutClass(page: SlideDslPage): string {
+  return `layout-${(page.layout_hint || 'hero-left').replace(/[^a-z0-9-]/gi, '').toLowerCase()}`;
+}
+
+function toneClass(page: SlideDslPage): string {
+  return `tone-${(page.visual_tone || 'technical').replace(/[^a-z0-9-]/gi, '').toLowerCase()}`;
+}
+
 async function initReveal() {
   if (!rootEl.value) {
     return;
@@ -159,7 +167,7 @@ onUnmounted(() => {
   <div ref="rootEl" class="reveal-stage">
     <div class="reveal">
       <div class="slides">
-        <section v-for="page in pages" :key="page.slide_key" class="reveal-page">
+        <section v-for="page in pages" :key="page.slide_key" class="reveal-page" :class="[layoutClass(page), toneClass(page)]">
           <h2 class="reveal-title" v-html="richText(blockByType(page, 'title'))" />
 
           <ul v-if="(blockByType(page, 'key_points')?.items ?? []).length" class="reveal-key-points">
@@ -222,16 +230,102 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+.reveal-page {
+  border-radius: 14px;
+  padding: 0.2em 0.3em;
+  position: relative;
+  overflow: hidden;
+}
+
+.reveal-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+}
+
+.reveal-page.tone-technical {
+  background: linear-gradient(155deg, #f6f8f9 0%, #edf2f5 45%, #e6edf0 100%);
+  color: #17333e;
+}
+
+.reveal-page.tone-technical::before {
+  background-image:
+    radial-gradient(circle at 14% 12%, rgba(39, 112, 138, 0.2) 0, transparent 42%),
+    linear-gradient(120deg, transparent 0, rgba(73, 127, 146, 0.16) 48%, transparent 100%);
+}
+
+.reveal-page.tone-editorial {
+  background: linear-gradient(150deg, #f6f0e6 0%, #f9f6ef 52%, #f2e7d8 100%);
+  color: #4a2813;
+}
+
+.reveal-page.tone-editorial::before {
+  background-image:
+    radial-gradient(circle at 85% 14%, rgba(190, 118, 78, 0.18) 0, transparent 45%),
+    linear-gradient(135deg, transparent 0, rgba(142, 85, 54, 0.12) 46%, transparent 100%);
+}
+
+.reveal-page.tone-spotlight {
+  background: radial-gradient(circle at 18% 8%, #fff8dc 0%, #efe6c8 42%, #e4d9b8 100%);
+  color: #463307;
+}
+
+.reveal-page.tone-spotlight::before {
+  background-image:
+    radial-gradient(circle at 24% 18%, rgba(241, 181, 40, 0.28) 0, transparent 48%),
+    linear-gradient(140deg, transparent 0, rgba(153, 119, 24, 0.12) 55%, transparent 100%);
+}
+
+.reveal-page.tone-warm {
+  background: linear-gradient(135deg, #fff2e8 0%, #fde7d5 48%, #fbdcc4 100%);
+  color: #5c2312;
+}
+
+.reveal-page.tone-warm::before {
+  background-image:
+    radial-gradient(circle at 79% 15%, rgba(247, 123, 76, 0.22) 0, transparent 48%),
+    linear-gradient(124deg, transparent 0, rgba(188, 91, 54, 0.12) 52%, transparent 100%);
+}
+
 .reveal :deep(.slides section) {
   text-align: left;
 }
 
 .reveal-title {
   margin-bottom: 0.4em;
+  position: relative;
+  z-index: 1;
+}
+
+.reveal-page.layout-split-evidence {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  column-gap: 1.1em;
+  align-content: start;
+}
+
+.reveal-page.layout-split-evidence .reveal-title {
+  grid-column: 1 / span 2;
+}
+
+.reveal-page.layout-data-table .reveal-comparison {
+  font-size: 1.05em;
+}
+
+.reveal-page.layout-process-steps .reveal-flow li {
+  background: #fff7e8;
+  border: 1px solid #dec9a7;
+  border-radius: 10px;
+  padding: 0.25em 0.45em;
 }
 
 .reveal-key-points {
   margin-bottom: 0.8em;
+  position: relative;
+  z-index: 1;
 }
 
 .reveal-comparison table {
@@ -257,6 +351,8 @@ onUnmounted(() => {
 .reveal-evidence {
   font-size: 0.74em;
   color: #4f3615;
+  position: relative;
+  z-index: 1;
 }
 
 .reveal-diagram {

@@ -9,7 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.schemas.slide_lesson_plan import AssetLessonPlanPayload
+from app.schemas.slide_lesson_plan import (
+    AssetLessonPlanPayload,
+    AssetLessonPlanRebuildRequest,
+)
 from app.services.slide_dsl_service import (
     build_slides_dsl,
     ensure_asset_slides_schema_up_to_date,
@@ -129,6 +132,25 @@ class Spec15SlidesPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(len(outline.pages), 8)
         self.assertLessEqual(len(outline.pages), 16)
 
+    def test_outline_does_not_lock_to_sixteen_for_common_evidence_density(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+        for stage in lesson_plan.stages:
+            base_anchor = stage.evidence_anchors[0]
+            stage.evidence_anchors = [
+                base_anchor,
+                base_anchor.model_copy(
+                    update={
+                        "page_no": base_anchor.page_no + 1,
+                        "block_ids": [f"{base_anchor.block_ids[0]}-extra"],
+                    }
+                ),
+            ]
+
+        outline = build_slide_outline(lesson_plan)
+
+        self.assertGreaterEqual(outline.page_count, 8)
+        self.assertLess(outline.page_count, 16)
+
     def test_build_slides_dsl_emits_v2_schema_and_rich_blocks(self) -> None:
         lesson_plan = _lesson_plan_payload()
 
@@ -175,6 +197,24 @@ class Spec15SlidesPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(len(comparison_block.meta["rows"]), 2)
         self.assertIn("steps", flow_block.meta)
         self.assertGreaterEqual(len(flow_block.meta["steps"]), 3)
+
+    def test_director_plan_assigns_varied_layout_hints(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+
+        slides_dsl = build_slides_dsl(lesson_plan)
+
+        layout_hints = [page.layout_hint for page in slides_dsl.pages]
+        self.assertTrue(all(layout_hints))
+        self.assertGreaterEqual(len(set(layout_hints)), 3)
+
+    def test_director_plan_assigns_visual_tones(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+
+        slides_dsl = build_slides_dsl(lesson_plan)
+
+        tones = [page.visual_tone for page in slides_dsl.pages]
+        self.assertTrue(all(tones))
+        self.assertGreaterEqual(len(set(tones)), 2)
 
     def test_key_points_are_presentation_content_not_planning_scaffold(self) -> None:
         lesson_plan = _lesson_plan_payload()
@@ -224,6 +264,30 @@ class Spec15SlidesPipelineTests(unittest.TestCase):
         self.assertTrue(first_points[0].startswith(first_page.blocks[0].content))
         self.assertTrue(second_points[0].startswith(second_page.blocks[0].content))
         self.assertNotEqual(first_points[0], second_points[0])
+
+    def test_key_points_do_not_copy_long_english_evidence_verbatim(self) -> None:
+        lesson_plan = _lesson_plan_payload()
+        lesson_plan.stages[0].evidence_anchors[0].quote = (
+            "Recurrent neural networks, long short-term memory [13] and gated recurrent "
+            "[7] neural networks in particular, have been firmly established as state of the art "
+            "approaches in sequence modeling and transduction problems."
+        )
+
+        slides_dsl = build_slides_dsl(lesson_plan)
+
+        first_page_key_points = next(
+            block for block in slides_dsl.pages[0].blocks if block.block_type == "key_points"
+        )
+        first_page_evidence = next(
+            block for block in slides_dsl.pages[0].blocks if block.block_type == "evidence"
+        )
+        joined_key_points = " ".join(first_page_key_points.items)
+        joined_evidence = " ".join(first_page_evidence.items)
+
+        self.assertNotIn("Recurrent neural networks", joined_key_points)
+        self.assertNotIn("long short-term memory", joined_key_points)
+        self.assertNotIn("Recurrent neural networks", joined_evidence)
+        self.assertNotIn("long short-term memory", joined_evidence)
 
     def test_legacy_payload_detection_supports_auto_rebuild_gate(self) -> None:
         legacy_payload = {
@@ -309,6 +373,10 @@ class Spec15SlidesPipelineTests(unittest.TestCase):
         self.assertFalse(enqueued)
         self.assertEqual(rebuilt_asset.id, "asset-spec15")
         enqueue_mock.assert_not_called()
+
+    def test_rebuild_request_defaults_to_llm_strategy(self) -> None:
+        payload = AssetLessonPlanRebuildRequest()
+        self.assertEqual(payload.strategy, "llm")
 
 
 if __name__ == "__main__":

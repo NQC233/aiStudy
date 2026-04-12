@@ -16,6 +16,66 @@ _TEMPLATE_ALLOWLIST = {
     "takeaway_wrapup",
 }
 
+_TITLE_MAX_CHARS = 34
+_KEY_POINT_ITEM_MAX_CHARS = 64
+_EVIDENCE_ITEM_MAX_CHARS = 96
+_SPEAKER_NOTE_MAX_CHARS = 220
+_PAGE_DENSITY_MAX_CHARS = 360
+_VERBATIM_SNIPPET_MIN_CHARS = 42
+
+
+def _overflow_risks(page) -> list[str]:
+    risks: list[str] = []
+
+    title_block = next((b for b in page.blocks if b.block_type == "title"), None)
+    key_points_block = next((b for b in page.blocks if b.block_type == "key_points"), None)
+    evidence_block = next((b for b in page.blocks if b.block_type == "evidence"), None)
+    speaker_note_block = next((b for b in page.blocks if b.block_type == "speaker_note"), None)
+
+    if title_block and len(title_block.content.strip()) > _TITLE_MAX_CHARS:
+        risks.append("title_too_long")
+
+    key_points_items = key_points_block.items if key_points_block else []
+    evidence_items = evidence_block.items if evidence_block else []
+    if any(len(item.strip()) > _KEY_POINT_ITEM_MAX_CHARS for item in key_points_items):
+        risks.append("key_point_too_long")
+    if any(len(item.strip()) > _EVIDENCE_ITEM_MAX_CHARS for item in evidence_items):
+        risks.append("evidence_too_long")
+
+    density_chars = sum(len(item.strip()) for item in key_points_items) + sum(
+        len(item.strip()) for item in evidence_items
+    )
+    if density_chars > _PAGE_DENSITY_MAX_CHARS:
+        risks.append("page_density_too_high")
+
+    if speaker_note_block and len(speaker_note_block.content.strip()) > _SPEAKER_NOTE_MAX_CHARS:
+        risks.append("speaker_note_too_long")
+
+    return risks
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join((value or "").lower().split())
+
+
+def _has_verbatim_copy_risk(page) -> bool:
+    evidence_block = next((b for b in page.blocks if b.block_type == "evidence"), None)
+    key_points_block = next((b for b in page.blocks if b.block_type == "key_points"), None)
+    combined_content = _normalize_text(
+        " ".join((key_points_block.items if key_points_block else []) + (evidence_block.items if evidence_block else []))
+    )
+    if not combined_content:
+        return False
+
+    for citation in page.citations:
+        quote = _normalize_text(citation.quote)
+        if len(quote) < _VERBATIM_SNIPPET_MIN_CHARS:
+            continue
+        probe = quote[: min(len(quote), 96)]
+        if probe and probe in combined_content:
+            return True
+    return False
+
 
 def validate_slides_must_pass(slides_dsl: SlidesDslPayload) -> MustPassReport:
     issues: list[MustPassIssue] = []
@@ -64,6 +124,17 @@ def validate_slides_must_pass(slides_dsl: SlidesDslPayload) -> MustPassReport:
                 )
             )
 
+        overflow_risks = _overflow_risks(page)
+        if overflow_risks:
+            issues.append(
+                MustPassIssue(
+                    page_index=index,
+                    field="layout_fit",
+                    code="overflow_risk",
+                    message=f"存在视口溢出风险: {', '.join(overflow_risks)}",
+                )
+            )
+
         key_points_count = len(key_point_blocks[0].items) if key_point_blocks else 0
         if key_points_count < 2 or key_points_count > 4:
             issues.append(
@@ -106,6 +177,16 @@ def validate_slides_must_pass(slides_dsl: SlidesDslPayload) -> MustPassReport:
                     field="citations",
                     code="missing_citations",
                     message="citations 不能为空",
+                )
+            )
+
+        if _has_verbatim_copy_risk(page):
+            issues.append(
+                MustPassIssue(
+                    page_index=index,
+                    field="content_rewrite",
+                    code="verbatim_copy_risk",
+                    message="展示内容疑似直接复制引用原文，需改写为讲解表达。",
                 )
             )
         for citation in page.citations:
@@ -192,6 +273,15 @@ def evaluate_slides_quality(
         if duplicate_key_count.get(evidence_key, 0) > 1:
             score -= 10.0
             reasons.append("与其他页面内容重复度较高")
+
+        overflow_risks = _overflow_risks(page)
+        if overflow_risks:
+            score -= 35.0
+            reasons.append(f"存在视口溢出风险: {', '.join(overflow_risks)}")
+
+        if _has_verbatim_copy_risk(page):
+            score -= 20.0
+            reasons.append("展示内容疑似直接复制引用原文")
 
         if not reasons:
             reasons.append("质量达标")

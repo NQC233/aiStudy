@@ -37,7 +37,20 @@ def clamp_page_count(proposed_count: int, minimum: int = 8, maximum: int = 16) -
 
 def _estimate_page_count(lesson_plan: AssetLessonPlanPayload) -> int:
     evidence_count = sum(len(stage.evidence_anchors) for stage in lesson_plan.stages)
-    proposed = 8 + evidence_count
+    unique_anchor_pages = {
+        anchor.page_no
+        for stage in lesson_plan.stages
+        for anchor in stage.evidence_anchors
+        if anchor.page_no and anchor.page_no > 0
+    }
+    dense_stage_count = sum(
+        1 for stage in lesson_plan.stages if len(stage.evidence_anchors) >= 3
+    )
+
+    proposed = 8
+    proposed += min(3, evidence_count // 4)
+    proposed += min(3, len(unique_anchor_pages) // 3)
+    proposed += min(2, dense_stage_count)
     return clamp_page_count(proposed)
 
 

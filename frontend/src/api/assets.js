@@ -195,7 +195,7 @@ export function sendChatSessionMessage(sessionId, payload) {
 export function fetchAssetSlides(assetId) {
     return requestJson(`/api/assets/${assetId}/slides`);
 }
-export async function rebuildAssetSlides(assetId, strategy = 'template') {
+export async function rebuildAssetSlides(assetId, strategy = 'llm') {
     const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/slides/lesson-plan/rebuild`, {
         method: 'POST',
         headers: {

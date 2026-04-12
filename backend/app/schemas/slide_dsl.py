@@ -36,6 +36,9 @@ class SlidePageDsl(BaseModel):
     slide_key: str
     stage: str
     page_type: str = "topic"
+    layout_hint: str = "hero-left"
+    director_source: Literal["rule", "llm"] = "rule"
+    visual_tone: Literal["editorial", "technical", "spotlight", "warm"] = "technical"
     template_type: str
     animation_preset: str
     animations: list[SlideAnimation] = Field(default_factory=list)

@@ -487,7 +487,7 @@ async function recoverSlidesAndBack() {
   recoveringSlides.value = true;
 
   try {
-    await rebuildAssetSlides(assetId.value);
+    await rebuildAssetSlides(assetId.value, 'llm');
     await router.push({
       name: 'workspace',
       params: { assetId: assetId.value },

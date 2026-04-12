@@ -364,6 +364,9 @@ export interface SlideDslPage {
   slide_key: string;
   stage: string;
   page_type: string;
+  layout_hint: string;
+  director_source: 'rule' | 'llm';
+  visual_tone: 'editorial' | 'technical' | 'spotlight' | 'warm';
   template_type: string;
   animation_preset: string;
   blocks: SlideDslBlock[];
@@ -791,7 +794,7 @@ export function fetchAssetSlides(assetId: string): Promise<AssetSlidesResponse> 
 
 export async function rebuildAssetSlides(
   assetId: string,
-  strategy: 'template' | 'llm' = 'template',
+  strategy: 'template' | 'llm' = 'llm',
 ): Promise<AssetLessonPlanRebuildResponse> {
   const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/slides/lesson-plan/rebuild`, {
     method: 'POST',

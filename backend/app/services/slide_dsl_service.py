@@ -33,6 +33,7 @@ from app.services.llm_service import (
 )
 from app.services.slide_fix_service import repair_low_quality_pages
 from app.services.slide_dsl_compiler_service import compile_markdown_draft_to_slides_dsl
+from app.services.slide_director_plan_service import build_slide_director_plan
 from app.services.slide_markdown_service import build_slide_markdown_draft
 from app.services.slide_outline_service import build_slide_outline
 from app.services.slide_playback_service import (
@@ -52,7 +53,11 @@ SlidesBuilder = Callable[[AssetLessonPlanPayload], SlidesDslPayload]
 def build_slides_dsl(lesson_plan: AssetLessonPlanPayload) -> SlidesDslPayload:
     outline = build_slide_outline(lesson_plan)
     draft = build_slide_markdown_draft(outline)
-    return compile_markdown_draft_to_slides_dsl(lesson_plan, draft)
+    director_plan = build_slide_director_plan(
+        draft,
+        llm_enabled=False,
+    )
+    return compile_markdown_draft_to_slides_dsl(lesson_plan, draft, director_plan)
 
 
 def _build_slides_dsl_by_strategy(
@@ -66,29 +71,40 @@ def _build_slides_dsl_by_strategy(
 
 
 def build_slides_dsl_via_llm(lesson_plan: AssetLessonPlanPayload) -> SlidesDslPayload:
-    slides_dsl = build_slides_dsl(lesson_plan)
+    outline = build_slide_outline(lesson_plan)
+    draft = build_slide_markdown_draft(outline)
+    director_plan = build_slide_director_plan(
+        draft,
+        llm_enabled=True,
+    )
+    slides_dsl = compile_markdown_draft_to_slides_dsl(lesson_plan, draft, director_plan)
     for page in slides_dsl.pages:
         title_block = next((b for b in page.blocks if b.block_type == "title"), None)
         note_block = next((b for b in page.blocks if b.block_type == "speaker_note"), None)
         evidence_block = next((b for b in page.blocks if b.block_type == "evidence"), None)
         key_points_block = next((b for b in page.blocks if b.block_type == "key_points"), None)
+        takeaway_block = next((b for b in page.blocks if b.block_type == "takeaway"), None)
         if not title_block or not note_block or not evidence_block:
             continue
         llm_copy = generate_slides_stage_copy(
             stage=page.stage,
             title=title_block.content,
-            goal="",
+            goal=(key_points_block.items[0] if key_points_block and key_points_block.items else ""),
             script=note_block.content,
             evidence_quotes=evidence_block.items,
         )
         title_block.content = llm_copy["title"]
         note_block.content = llm_copy["script"]
-        evidence_block.items = [llm_copy["evidence"]]
-        if key_points_block and llm_copy.get("goal"):
+        evidence_block.items = llm_copy.get("evidence_list") or [llm_copy["evidence"]]
+        if key_points_block:
+            key_points_block.items = llm_copy.get("key_points") or [llm_copy.get("goal", "")]
             key_points_block.items = [
-                llm_copy["goal"],
-                *[item for item in key_points_block.items if item][:2],
+                item for item in key_points_block.items if item and item.strip()
             ][:4]
+            if len(key_points_block.items) < 2:
+                key_points_block.items.extend(evidence_block.items[:1])
+        if takeaway_block:
+            takeaway_block.content = llm_copy.get("takeaway") or takeaway_block.content
     return slides_dsl
 
 

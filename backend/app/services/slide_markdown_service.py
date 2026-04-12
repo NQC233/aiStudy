@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from app.services.slide_outline_service import SlideOutlineResult
 
@@ -44,6 +45,29 @@ def _clean_evidence_text(text: str) -> str:
     return cleaned
 
 
+def _ascii_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    ascii_count = sum(1 for char in text if ord(char) < 128)
+    return ascii_count / max(len(text), 1)
+
+
+def _distill_evidence_text(text: str, title: str) -> str:
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    if not normalized:
+        return "原文证据仍在补齐，请回看引用段落。"
+
+    english_heavy = _ascii_ratio(normalized) >= 0.45
+    if english_heavy:
+        compact_title = title.strip() or "本页"
+        return f"原文证据支持“{compact_title}”的核心结论（详见引用）。"
+
+    cleaned = normalized.replace("；", " ").strip()
+    if len(cleaned) > 72:
+        cleaned = f"{cleaned[:71].rstrip()}（详见引用）"
+    return cleaned
+
+
 def _page_type_insight(page_type: str, title: str) -> str:
     if page_type == "comparison":
         return f"{title}突出基线与本方法在核心指标上的差异。"
@@ -80,7 +104,8 @@ def _build_key_points(goal: str, page_type: str, title: str, evidence: list[str]
 def build_slide_markdown_draft(outline: SlideOutlineResult) -> SlideMarkdownDraftResult:
     pages: list[SlideMarkdownDraftPage] = []
     for item in outline.pages:
-        evidence = [anchor.quote for anchor in item.evidence_anchors if anchor.quote][:2]
+        raw_evidence = [anchor.quote for anchor in item.evidence_anchors if anchor.quote][:2]
+        evidence = [_distill_evidence_text(quote, item.title) for quote in raw_evidence if quote]
         if not evidence:
             evidence = ["补充证据：请回看原文对应段落。"]
         key_points = _build_key_points(item.goal, item.page_type, item.title, evidence)
