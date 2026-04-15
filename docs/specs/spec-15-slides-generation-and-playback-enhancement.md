@@ -288,3 +288,23 @@ Spec 15 结束后，Spec 16 再处理：
   - 规则生成的内容模板感仍明显，布局与动画策略尚未由模型主导。
 - 后续接手建议：
   - 进入 Spec 15.1 第 2 轮：新增 `slide_director_plan`（模型规划层）并编译到 Reveal runtime，降低模板化输出。
+
+### 第 10 轮（fix/rag-pre-embedding-filter：检索质量修复）
+
+- 实际完成内容：
+  - 在 `chunk_builder_service.py` 中加入 pre-embedding 过滤，阻断作者页、references、permission boilerplate、heading-only 噪声与已知 broken OCR 模式进入向量库。
+  - 为 `parsed_json.assets.images/tables` 生成 asset-derived chunks，让 figure/table 检索有 caption + context 驱动的专用候选，而不只依赖正文 chunk。
+  - 在 `retrieval_service.py` 中加入 raw retrieval post-filter 与轻量 section-aware bias，降低 motivation/method family 被 `Training` / `Optimizer` 干扰的概率。
+  - 对真实资产 `Attention Is All You Need` 做了 worker 重启、KB rebuild 和多轮 live retrieval 复验。
+- 验证结果：
+  - `cd backend && python -m unittest tests.test_chunk_builder_service -v` 通过（6 tests）。
+  - `cd backend && python -m unittest tests.test_retrieval_service_filters -v` 通过（4 tests）。
+  - live 重建后 chunk count 从 44 降到 35，说明低信号块已被前置过滤。
+- 复验结论：
+  - `method overview and framework` 已显著改善，`5 Training` 不再占据首位。
+  - `important result tables metrics` 已基本可用，Top 3 稳定命中 `Table 2 / Table 3` 相关内容。
+  - `important figures diagrams architecture` 明显比修复前干净，但仍混入部分 table/result 相关候选。
+  - `research problem and motivation` 仍未完全达标，training/optimizer 相关块在尾部仍会出现。
+- 未解决问题：
+  - 若要完全达到后续 Spec 15 的 slide-oriented retrieval 目标，还需要做真正的 family dispatch：text families 走 retrieval，figure/table families 走 asset-first 主路径。
+  - motivation family 还需要更强的 query-intent 约束，或在下一阶段引入 LLM evidence selector。

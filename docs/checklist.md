@@ -1765,6 +1765,36 @@
 
 ## 7. 相关文档
 
+### Retrieval Fix 记录（fix/rag-pre-embedding-filter）
+
+- 完成内容：
+  - `backend/app/services/chunk_builder_service.py` 新增 pre-embedding block filter，过滤 front matter 作者块、references、permission boilerplate、heading-only 噪声与已知 broken OCR 模式。
+  - `build_chunks_from_parsed_payload(...)` 新增 asset-derived chunks，为 `parsed_json.assets.images/tables` 生成基于 caption + 本地上下文的检索候选。
+  - `backend/app/services/retrieval_service.py` 新增 raw retrieval post-filter，避免低信号结果直接从 `/retrieval/search` API 泄出。
+  - `backend/app/services/retrieval_service.py` 新增轻量 section-aware bias，对 motivation / method 类 query 降低 `Training` / `Optimizer` 排名，并抬升 `Introduction` / `Abstract` / `Why Self-Attention` / `Model Architecture` / `Attention` 等 section。
+  - 已对真实资产 `Attention Is All You Need` 执行 worker 重启 + KB rebuild + 多轮 live retrieval 复验。
+- 主要新增或修改文件：
+  - `backend/app/services/chunk_builder_service.py`
+  - `backend/app/services/retrieval_service.py`
+  - `backend/tests/test_chunk_builder_service.py`
+  - `backend/tests/test_retrieval_service_filters.py`
+  - `docs/checklist.md`
+  - `docs/specs/spec-15-slides-generation-and-playback-enhancement.md`
+- 验证结果：
+  - `cd backend && python -m unittest tests.test_chunk_builder_service -v` 通过（6 tests）。
+  - `cd backend && python -m unittest tests.test_retrieval_service_filters -v` 通过（4 tests）。
+  - live asset `719c3918-e6a4-451a-9681-f06b673ce394` 重建后 chunk count 从 44 降到 35。
+  - live retrieval 复验结论：
+    - `method overview and framework` 已明显改善，`Training` 从首位降到末位。
+    - `important result tables metrics` 已基本达标，Top 3 稳定命中 `Table 2 / Table 3` 相关内容。
+    - `important figures diagrams architecture` 比修复前显著更干净，但仍会混入 table/result 相关候选。
+    - `research problem and motivation` 仍未完全达标，Top 4/5 仍可能混入 training / optimizer 相关块。
+- 当前已知缺口：
+  - figure/table family 还只是“asset-derived candidate 注入”，尚未做真正的 family dispatch 与 asset-first 主路径。
+  - motivation family 仍需要更强的 query-intent 约束或后续 LLM selector，才能完全清除 training/optimizer 干扰。
+- 建议提交信息：
+  - `fix: improve retrieval quality with pre-embedding and post-filtering`
+
 - [requirements.md](/Users/nqc233/VSCode/aiStudy/docs/requirements.md)
 - [architecture.md](/Users/nqc233/VSCode/aiStudy/docs/architecture.md)
 - [roadmap.md](/Users/nqc233/VSCode/aiStudy/docs/roadmap.md)
