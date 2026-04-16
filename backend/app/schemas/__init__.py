@@ -14,10 +14,6 @@ from app.schemas.note import (
     UpdateNoteRequest,
 )
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
-from app.schemas.slide_lesson_plan import (
-    AssetLessonPlanRebuildResponse,
-    AssetLessonPlanResponse,
-)
 from app.schemas.slide_dsl import MustPassReport, QualityScoreReport, SlidesDslPayload
 
 __all__ = [
@@ -27,8 +23,6 @@ __all__ = [
     "AssetListItem",
     "AssetParseRetryResponse",
     "AssetParseStatusResponse",
-    "AssetLessonPlanRebuildResponse",
-    "AssetLessonPlanResponse",
     "SlidesDslPayload",
     "MustPassReport",
     "QualityScoreReport",

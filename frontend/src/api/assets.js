@@ -195,18 +195,8 @@ export function sendChatSessionMessage(sessionId, payload) {
 export function fetchAssetSlides(assetId) {
     return requestJson(`/api/assets/${assetId}/slides`);
 }
-export async function rebuildAssetSlides(assetId, strategy = 'llm') {
-    const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/slides/lesson-plan/rebuild`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ strategy }),
-    });
-    if (!response.ok) {
-        throw new Error(await parseErrorMessage(response, `重建演示内容失败：${response.status}`));
-    }
-    return response.json();
+export function rebuildAssetSlides(assetId) {
+    return postJson(`/api/assets/${assetId}/slides/runtime-bundle/rebuild`, {});
 }
 export function ensureAssetSlideTts(assetId, payload) {
     return postJson(`/api/assets/${assetId}/slides/tts/ensure`, payload);

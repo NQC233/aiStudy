@@ -1,0 +1,2 @@
+[     146ms] [WARNING] [Vue Router warn]: No match found for location with path "/slides/719c3918-e6a4-451a-9681-f06b673ce394" @ http://localhost:5173/node_modules/.vite/deps/vue-router.js?v=1fd2f585:51
+[     214ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/favicon.ico:0

@@ -23,8 +23,6 @@ from app.services.retrieval_service import (
     enqueue_asset_chunk_rebuild,
     run_asset_kb_pipeline,
 )
-from app.services.slide_dsl_service import run_asset_slides_dsl_pipeline
-from app.services.slide_lesson_plan_service import run_asset_lesson_plan_pipeline
 from app.services.slide_tts_service import run_asset_slide_tts_pipeline
 from app.workers.celery_app import celery_app
 
@@ -306,41 +304,6 @@ def enqueue_generate_asset_mindmap(self: Task, asset_id: str) -> dict[str, str |
 
         logger.exception("导图生成失败: asset_id=%s", asset_id, exc_info=exc)
         raise
-    finally:
-        db.close()
-
-
-@celery_app.task(bind=True, name="app.workers.tasks.enqueue_generate_asset_lesson_plan")
-def enqueue_generate_asset_lesson_plan(
-    self: Task,
-    asset_id: str,
-    strategy: str = "template",
-) -> dict[str, str | int]:
-    """执行资产 lesson_plan 生成任务。"""
-    db = SessionLocal()
-    try:
-        result = run_asset_lesson_plan_pipeline(
-            db,
-            asset_id,
-            retry_meta=_retry_context(self),
-        )
-        if result.get("status") == "ready":
-            enqueue_generate_asset_slides_dsl.delay(asset_id, strategy=strategy)
-        return result
-    finally:
-        db.close()
-
-
-@celery_app.task(bind=True, name="app.workers.tasks.enqueue_generate_asset_slides_dsl")
-def enqueue_generate_asset_slides_dsl(
-    self: Task,
-    asset_id: str,
-    strategy: str = "template",
-) -> dict[str, str | int | float]:
-    """执行资产 slides DSL 生成与质量校验任务。"""
-    db = SessionLocal()
-    try:
-        return run_asset_slides_dsl_pipeline(db, asset_id, strategy=strategy)
     finally:
         db.close()
 

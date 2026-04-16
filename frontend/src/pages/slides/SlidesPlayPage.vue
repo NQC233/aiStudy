@@ -6,25 +6,20 @@ import {
   ensureAssetSlideTts,
   fetchAssetDetail,
   fetchAssetSlides,
-  rebuildAssetSlides,
   retryNextAssetSlideTts,
   type AssetDetail,
   type AssetSlidesResponse,
-  type SlideDslPage,
+  type RuntimeRenderedPage,
 } from '@/api/assets';
-import RevealSlidesDeck from '@/components/slides/RevealSlidesDeck.vue';
-import SlideBlockRenderer from '@/components/slides/SlideBlockRenderer.vue';
+import SlidesDeckRuntime from '@/components/slides/SlidesDeckRuntime.vue';
 import { useSlidesPlaybackTimeline } from '@/composables/useSlidesPlaybackTimeline';
 
 const route = useRoute();
 const router = useRouter();
 const assetId = computed(() => String(route.params.assetId ?? ''));
-const runtimeMode = computed(() => String(route.query.runtime ?? 'reveal'));
-const isRevealRuntime = computed(() => runtimeMode.value !== 'legacy');
 
 const loading = ref(false);
 const errorMessage = ref('');
-const recoveringSlides = ref(false);
 const playbackMessage = ref('');
 const playbackBusy = ref(false);
 const failedNextPageIndex = ref<number | null>(null);
@@ -37,8 +32,8 @@ const slidesResponse = ref<AssetSlidesResponse | null>(null);
 const currentSlideIndex = ref(0);
 const audioEl = ref<HTMLAudioElement | null>(null);
 
-const pages = computed(() => slidesResponse.value?.slides_dsl?.pages ?? []);
-const currentPage = computed(() => pages.value[currentSlideIndex.value] ?? null);
+const pages = computed<RuntimeRenderedPage[]>(() => slidesResponse.value?.runtime_bundle?.pages ?? []);
+const currentPage = computed<RuntimeRenderedPage | null>(() => pages.value[currentSlideIndex.value] ?? null);
 const qualityScore = computed(() => slidesResponse.value?.quality_report?.overall_score ?? null);
 const generationMeta = computed(() => slidesResponse.value?.generation_meta ?? null);
 const shadowReport = computed(() => slidesResponse.value?.shadow_report ?? null);
@@ -70,11 +65,11 @@ const {
 });
 
 const currentManifestItem = computed(() => {
-  const slideKey = currentPage.value?.slide_key;
-  if (!slideKey) {
+  const pageKey = currentPage.value?.page_id;
+  if (!pageKey) {
     return null;
   }
-  return ttsManifestItems.value.find((item) => item.slide_key === slideKey) ?? null;
+  return ttsManifestItems.value.find((item) => item.slide_key === pageKey) ?? null;
 });
 
 function formatRetryEta(eta: string | undefined): string {
@@ -107,28 +102,14 @@ const currentTtsRetryHint = computed(() => {
   return `自动重试中（${attempt}/${maxRetries}）`;
 });
 
-function blockContent(page: SlideDslPage | null, blockType: string): string {
+function currentPageTitle(page: RuntimeRenderedPage | null): string {
   if (!page) {
     return '';
   }
-  const block = page.blocks.find((item) => item.block_type === blockType);
-  if (!block) {
-    return '';
-  }
-  if (block.content?.trim()) {
-    return block.content;
-  }
-  if (block.items?.length) {
-    return block.items.join('；');
-  }
-  return '';
+  return page.page_id;
 }
 
-function isBlockActive(blockType: string): boolean {
-  return activeCue.value?.blockType === blockType;
-}
-
-function handleRevealSlideChange(index: number) {
+function handleRuntimeSlideChange(index: number) {
   if (index === currentSlideIndex.value) {
     return;
   }
@@ -178,7 +159,7 @@ async function loadSlides() {
     await refreshSlides();
     const slides = slidesResponse.value;
 
-    if (!slides?.slides_dsl || slides.slides_status !== 'ready') {
+    if (!slides?.runtime_bundle || slides.slides_status !== 'ready') {
       if (slides?.rebuilding || slides?.rebuild_reason === 'schema_upgrade_rebuild' || slides?.slides_status === 'processing') {
         playbackMessage.value = '检测到旧版演示结构，系统正在自动升级重建，请稍后自动刷新。';
         scheduleRebuildingPoll();
@@ -292,7 +273,7 @@ async function pollWaitingNextPage() {
     await ensureTtsForPage(nextIndex, true);
     await refreshSlides();
     const nextPage = pages.value[nextIndex];
-    const nextManifest = ttsManifestItems.value.find((item) => item.slide_key === nextPage?.slide_key);
+    const nextManifest = ttsManifestItems.value.find((item) => item.slide_key === nextPage?.page_id);
     if (!nextManifest) {
       clearWaitingState();
       playbackMessage.value = '下一页状态异常，请手动重试。';
@@ -368,7 +349,7 @@ async function handleAutoAdvanceAfterEnded() {
     await ensureTtsForPage(nextIndex, true);
     await refreshSlides();
     const nextPage = pages.value[nextIndex];
-    const nextManifest = ttsManifestItems.value.find((item) => item.slide_key === nextPage?.slide_key);
+    const nextManifest = ttsManifestItems.value.find((item) => item.slide_key === nextPage?.page_id);
     if (nextManifest?.status === 'failed') {
       clearWaitingState();
       failedNextPageIndex.value = nextIndex;
@@ -481,23 +462,11 @@ async function backToWorkspace() {
 }
 
 async function recoverSlidesAndBack() {
-  if (recoveringSlides.value) {
-    return;
-  }
-  recoveringSlides.value = true;
-
-  try {
-    await rebuildAssetSlides(assetId.value, 'llm');
-    await router.push({
-      name: 'workspace',
-      params: { assetId: assetId.value },
-      query: { source: 'slides-rebuild' },
-    });
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '重新生成演示内容失败。';
-  } finally {
-    recoveringSlides.value = false;
-  }
+  await router.push({
+    name: 'workspace',
+    params: { assetId: assetId.value },
+    query: { source: 'slides-runtime-migration' },
+  });
 }
 
 watch(
@@ -595,8 +564,8 @@ onUnmounted(() => {
           <button type="button" class="toolbar-button toolbar-button--ghost" @click="backToWorkspace">
             返回工作区
           </button>
-          <button type="button" class="toolbar-button" :disabled="recoveringSlides" @click="recoverSlidesAndBack">
-            {{ recoveringSlides ? '提交中...' : '重新生成并返回工作区' }}
+          <button type="button" class="toolbar-button" @click="recoverSlidesAndBack">
+            返回工作区
           </button>
         </div>
       </section>
@@ -654,62 +623,41 @@ onUnmounted(() => {
           <nav v-if="pages.length" class="slides-page-nav" aria-label="演示分页目录">
             <button
               v-for="(page, index) in pages"
-              :key="page.slide_key"
+              :key="page.page_id"
               type="button"
               class="slides-page-nav__item"
               :class="{ 'slides-page-nav__item--active': index === currentSlideIndex }"
               @click="navigateToSlide(index, true)"
             >
               <span class="slides-page-nav__index">{{ index + 1 }}</span>
-              <span class="slides-page-nav__title">{{ blockContent(page, 'title') || page.stage }}</span>
+              <span class="slides-page-nav__title">{{ currentPageTitle(page) }}</span>
             </button>
           </nav>
 
-          <RevealSlidesDeck
-            v-if="isRevealRuntime && pages.length"
+          <SlidesDeckRuntime
+            v-if="pages.length"
             :pages="pages"
             :current-index="currentSlideIndex"
-            @update:current-index="handleRevealSlideChange"
+            @update:current-index="handleRuntimeSlideChange"
           />
-          <article v-else-if="currentPage" class="slides-section">
-            <h2>{{ currentSlideIndex + 1 }}. {{ blockContent(currentPage, 'title') || currentPage.stage }}</h2>
-            <SlideBlockRenderer
-              v-for="(block, idx) in currentPage.blocks"
-              :key="`${currentPage.slide_key}-${block.block_type}-${idx}`"
-              :block="block"
-              :active="isBlockActive(block.block_type)"
-            />
-          </article>
           <section v-else class="slides-empty">暂无可播放页面。</section>
         </section>
 
         <aside class="slides-notes">
           <header>
             <p class="slides-kicker">Speaker Notes</p>
-            <h2>{{ currentPage?.slide_key ?? '未选中页面' }}</h2>
+            <h2>{{ currentPage?.page_id ?? '未选中页面' }}</h2>
           </header>
 
           <p class="slides-script">
-            {{ currentPage ? (blockContent(currentPage, 'speaker_note') || blockContent(currentPage, 'script')) : '切换页面后查看讲稿。' }}
+            {{ currentPage ? '当前 runtime 页面已就绪；讲稿与引用锚点待后续 runtime payload 接入。' : '切换页面后查看讲稿。' }}
           </p>
           <p class="slides-meta">
             当前页音频：{{ currentManifestItem?.status ?? 'pending' }}
           </p>
           <p v-if="currentTtsRetryHint" class="slides-meta slides-meta--retry">{{ currentTtsRetryHint }}</p>
 
-          <ul v-if="currentPage?.citations.length" class="slides-citations">
-            <li v-for="(citation, idx) in currentPage.citations" :key="`${currentPage.slide_key}-${idx}`">
-              <button
-                type="button"
-                class="slides-citation-button"
-                @click="jumpToCitation(citation.page_no, citation.block_ids[0] ?? null)"
-              >
-                <strong>P{{ citation.page_no }} / {{ citation.block_ids[0] ?? 'block' }}</strong>
-                <span>{{ citation.quote }}</span>
-              </button>
-            </li>
-          </ul>
-          <p v-else class="slides-citation-empty">当前页暂无引用锚点。</p>
+          <p class="slides-citation-empty">当前 runtime 页面暂无引用锚点展示。</p>
         </aside>
       </section>
     </section>

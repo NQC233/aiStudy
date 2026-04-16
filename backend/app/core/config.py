@@ -6,7 +6,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """集中管理后端运行配置。"""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_name: str = "Paper Learning Platform API"
     app_env: str = "development"
@@ -49,13 +53,22 @@ class Settings(BaseSettings):
     mineru_poll_timeout_sec: int = 600
 
     dashscope_api_key: str | None = None
-    dashscope_base_url: str | None = None
+    dashscope_base_url: str | None = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     dashscope_model_name: str = "qwen-max"
+    dashscope_slides_analysis_model_name: str = "qwen3.6-plus"
+    dashscope_slides_vision_model_name: str = "qwen3.6-plus"
+    dashscope_slides_html_model_name: str = "qwen3.6-plus"
+    dashscope_slides_timeout_sec: int = 240
+    dashscope_slides_planner_timeout_sec: int = 240
+    dashscope_slides_scene_timeout_sec: int = 480
+    dashscope_slides_html_timeout_sec: int = 480
     dashscope_chat_timeout_sec: int = 90
     dashscope_embedding_base_url: str | None = None
     dashscope_embedding_model_name: str = "text-embedding-v4"
     dashscope_embedding_dimension: int = 1024
     dashscope_embedding_batch_size: int = 8
+    dashscope_image_base_url: str | None = None
+    dashscope_image_model_name: str = "qwen-image-2.0-pro"
     dashscope_tts_base_url: str | None = None
     dashscope_tts_model_name: str = "cosyvoice-v3-flash"
     dashscope_tts_voice: str = "longxiaochun_v3"

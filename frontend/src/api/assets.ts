@@ -139,6 +139,13 @@ export interface AssetMindmapRebuildResponse {
   message: string;
 }
 
+export interface AssetSlidesRebuildResponse {
+  asset_id: string;
+  slides_status: string;
+  schema_version: string | null;
+  runtime_bundle?: SlidesRuntimeBundle | null;
+}
+
 export interface ParsedDocumentPage {
   page_id: string;
   page_no: number;
@@ -471,6 +478,19 @@ export interface SlidePlaybackPlan {
   pages: SlidePlaybackPagePlan[];
 }
 
+export interface RuntimeRenderedPage {
+  page_id: string;
+  html: string;
+  css: string;
+  asset_refs: Record<string, unknown>[];
+  render_meta: Record<string, unknown>;
+}
+
+export interface SlidesRuntimeBundle {
+  page_count: number;
+  pages: RuntimeRenderedPage[];
+}
+
 export interface AssetSlidesResponse {
   asset_id: string;
   slides_status: string;
@@ -481,6 +501,7 @@ export interface AssetSlidesResponse {
   playback_status: 'not_ready' | 'ready';
   auto_page_supported: boolean;
   slides_dsl: SlidesDslPayload | null;
+  runtime_bundle?: SlidesRuntimeBundle | null;
   must_pass_report: SlideMustPassReport | null;
   quality_report: SlideQualityReport | null;
   fix_logs: SlideFixLog[];
@@ -514,13 +535,6 @@ export interface AssetSlideTtsRetryNextResponse {
   enqueued_slide_keys: string[];
   tts_status: 'not_generated' | 'processing' | 'ready' | 'failed' | 'partial';
   message: string;
-}
-
-export interface AssetLessonPlanRebuildResponse {
-  asset_id: string;
-  slides_status: string;
-  message: string;
-  strategy: 'template' | 'llm';
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
@@ -792,23 +806,8 @@ export function fetchAssetSlides(assetId: string): Promise<AssetSlidesResponse> 
   return requestJson<AssetSlidesResponse>(`/api/assets/${assetId}/slides`);
 }
 
-export async function rebuildAssetSlides(
-  assetId: string,
-  strategy: 'template' | 'llm' = 'llm',
-): Promise<AssetLessonPlanRebuildResponse> {
-  const response = await requestWithTimeout(`${API_BASE_URL}/api/assets/${assetId}/slides/lesson-plan/rebuild`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ strategy }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await parseErrorMessage(response, `重建演示内容失败：${response.status}`));
-  }
-
-  return response.json() as Promise<AssetLessonPlanRebuildResponse>;
+export function rebuildAssetSlides(assetId: string): Promise<AssetSlidesRebuildResponse> {
+  return postJson<AssetSlidesRebuildResponse>(`/api/assets/${assetId}/slides/runtime-bundle/rebuild`, {});
 }
 
 export function ensureAssetSlideTts(
