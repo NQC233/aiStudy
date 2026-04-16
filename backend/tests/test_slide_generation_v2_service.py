@@ -1188,6 +1188,175 @@ class SlideGenerationV2ServiceTests(unittest.TestCase):
         self.assertEqual(scene_meta["citations_count"], 0)
         self.assertEqual(scene_meta["asset_bindings_count"], 1)
 
+    def test_generate_asset_slides_runtime_bundle_propagates_deck_style_guide_to_scene_and_html_layers(self) -> None:
+        asset = SimpleNamespace(id="asset-1", title="Attention Is All You Need", slides_status="not_generated")
+        presentation = SimpleNamespace(
+            asset_id="asset-1",
+            status="pending",
+            runtime_bundle=None,
+            analysis_pack=None,
+            visual_asset_catalog=None,
+            presentation_plan=None,
+            scene_specs=None,
+            rendered_slide_pages=None,
+            error_meta={},
+            tts_manifest={},
+            playback_plan={},
+        )
+        seen: dict[str, object] = {}
+
+        result = generate_asset_slides_runtime_bundle(
+            _FakeDb(asset, presentation),
+            asset_id="asset-1",
+            parsed_payload={
+                "blocks": [{"block_id": "blk-1", "text": "Intro", "page_no": 1}],
+                "assets": {"images": [], "tables": []},
+            },
+            analysis_builder=lambda *_args, **_kwargs: {
+                "problem_statements": ["Recurrence slows training."],
+                "method_components": ["Self-attention encoder-decoder."],
+                "main_results": ["Better BLEU with less training cost."],
+            },
+            visual_asset_builder=lambda *_args, **_kwargs: [],
+            plan_builder=lambda *_args, **_kwargs: {
+                "page_count": 1,
+                "deck_style_guide": {
+                    "theme_name": "paper-dark",
+                    "language": "zh-CN",
+                    "layout_grammar": "headline-plus-evidence",
+                },
+                "pages": [
+                    {
+                        "page_id": "page-1",
+                        "scene_role": "method",
+                        "narrative_goal": "解释架构",
+                        "content_focus": "method_components",
+                        "visual_strategy": "text_only",
+                        "candidate_assets": [],
+                        "animation_intent": "soft_intro",
+                    }
+                ],
+            },
+            scene_builder=lambda presentation_plan, **kwargs: seen.update(
+                {"scene_style_guide": kwargs.get("deck_style_guide")}
+            ) or [
+                {
+                    "page_id": presentation_plan["pages"][0]["page_id"],
+                    "title": "解释架构",
+                    "summary_line": "解释架构",
+                    "layout_strategy": "hero-text",
+                    "content_blocks": [{"type": "bullets", "items": ["a"]}],
+                    "citations": [{"page_no": 1, "block_ids": ["b1"]}],
+                    "asset_bindings": [],
+                    "animation_plan": {"type": "soft_intro"},
+                    "speaker_note_seed": "paper-dark",
+                }
+            ],
+            html_renderer=lambda scene_spec, **kwargs: seen.update(
+                {"html_style_guide": kwargs.get("deck_style_guide")}
+            ) or {
+                "page_id": scene_spec["page_id"],
+                "html": f"<section>{scene_spec['title']}</section>",
+                "css": ".page{}",
+                "asset_refs": [],
+                "render_meta": {"theme_name": kwargs.get("deck_style_guide", {}).get("theme_name", "")},
+            },
+            runtime_bundle_builder=lambda rendered_pages: {"page_count": len(rendered_pages), "pages": rendered_pages},
+        )
+
+        self.assertEqual(seen["scene_style_guide"]["theme_name"], "paper-dark")
+        self.assertEqual(seen["html_style_guide"]["layout_grammar"], "headline-plus-evidence")
+        self.assertEqual(result["rendered_slide_pages"][0]["render_meta"]["theme_name"], "paper-dark")
+
+    def test_generate_asset_slides_runtime_bundle_isolates_parallel_scene_and_html_failures_by_page(self) -> None:
+        asset = SimpleNamespace(id="asset-1", title="Attention Is All You Need", slides_status="not_generated")
+        presentation = SimpleNamespace(
+            asset_id="asset-1",
+            status="pending",
+            runtime_bundle=None,
+            analysis_pack=None,
+            visual_asset_catalog=None,
+            presentation_plan=None,
+            scene_specs=None,
+            rendered_slide_pages=None,
+            error_meta={},
+            tts_manifest={},
+            playback_plan={},
+        )
+
+        result = generate_asset_slides_runtime_bundle(
+            _FakeDb(asset, presentation),
+            asset_id="asset-1",
+            parsed_payload={
+                "blocks": [{"block_id": "blk-1", "text": "Intro", "page_no": 1}],
+                "assets": {"images": [], "tables": []},
+            },
+            analysis_builder=lambda *_args, **_kwargs: {
+                "problem_statements": ["Recurrence slows training."],
+                "method_components": ["Self-attention encoder-decoder."],
+                "main_results": ["Better BLEU with less training cost."],
+            },
+            visual_asset_builder=lambda *_args, **_kwargs: [],
+            plan_builder=lambda *_args, **_kwargs: {
+                "page_count": 2,
+                "deck_style_guide": {"theme_name": "paper-dark", "language": "zh-CN"},
+                "pages": [
+                    {
+                        "page_id": "page-1",
+                        "scene_role": "cover",
+                        "narrative_goal": "第一页",
+                        "content_focus": "problem",
+                        "visual_strategy": "text_only",
+                        "candidate_assets": [],
+                        "animation_intent": "soft_intro",
+                    },
+                    {
+                        "page_id": "page-2",
+                        "scene_role": "method",
+                        "narrative_goal": "第二页",
+                        "content_focus": "method",
+                        "visual_strategy": "text_only",
+                        "candidate_assets": [],
+                        "animation_intent": "soft_intro",
+                    },
+                ],
+            },
+            scene_builder=lambda presentation_plan, **kwargs: [
+                {
+                    "page_id": page["page_id"],
+                    "title": page["narrative_goal"],
+                    "summary_line": page["narrative_goal"],
+                    "layout_strategy": "hero-text",
+                    "content_blocks": [{"type": "bullets", "items": [page["page_id"]]}],
+                    "citations": [{"page_no": 1, "block_ids": [page["page_id"]]}],
+                    "asset_bindings": [],
+                    "animation_plan": {"type": "soft_intro"},
+                    "speaker_note_seed": kwargs.get("deck_style_guide", {}).get("theme_name", ""),
+                }
+                if page["page_id"] == "page-1"
+                else (_ for _ in ()).throw(RuntimeError("scene page-2 failed"))
+                for page in presentation_plan["pages"]
+            ],
+            html_renderer=lambda scene_spec, **kwargs: (
+                {
+                    "page_id": scene_spec["page_id"],
+                    "html": f"<section>{scene_spec['title']}</section>",
+                    "css": ".page{}",
+                    "asset_refs": [],
+                    "render_meta": {"theme_name": kwargs.get("deck_style_guide", {}).get("theme_name", "")},
+                }
+                if scene_spec["page_id"] == "page-1"
+                else (_ for _ in ()).throw(RuntimeError("html page-2 failed"))
+            ),
+            runtime_bundle_builder=lambda rendered_pages: {"page_count": len(rendered_pages), "pages": rendered_pages},
+        )
+
+        self.assertEqual([scene["page_id"] for scene in result["scene_specs"]], ["page-1", "page-2"])
+        self.assertEqual(result["error_meta"]["scene_generation"][0]["status"], "success")
+        self.assertEqual(result["error_meta"]["scene_generation"][1]["status"], "fallback")
+        self.assertEqual(result["error_meta"]["html_generation"][0]["status"], "success")
+        self.assertEqual(result["error_meta"]["html_generation"][1]["status"], "fallback")
+
 
 if __name__ == "__main__":
     unittest.main()

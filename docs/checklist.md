@@ -57,6 +57,7 @@
 - [x] Slides 新主线模型栈已确定：`Qwen3.6-Plus` 负责文本分析/视觉理解/HTML 生成，`Qwen-Image-2.0` 作为文生图补位模型
 - [x] Spec 15.1 首轮运行时已改写为纯 HTML/CSS deck runtime，不再以 Reveal.js 为首轮依赖
 - [x] Spec 15 调试观测已补齐 Level 2/3 内层来源标记：现可区分 plan 内层 fallback 与 scene 空壳成功，避免外层 `success` 掩盖真实退化路径
+- [x] Spec 15 已接入 Level 3/4 按页并行执行入口与 deck 级统一风格约束透传：scene/html 现支持配置化并发度、按页失败隔离、按页保序输出
 
 ## 3. 当前待确认事项
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from app.services.llm_service import generate_slide_scene_spec
@@ -54,40 +55,78 @@ def _annotate_scene_debug(scene: dict[str, object], *, scene_source: str) -> dic
     }
 
 
+def _call_scene_generator(
+    scene_generator: Callable[..., dict[str, object]],
+    page: dict[str, object],
+    analysis_pack: dict[str, Any],
+    visual_asset_catalog: list[dict[str, object]],
+    deck_style_guide: dict[str, Any],
+) -> dict[str, object]:
+    try:
+        return scene_generator(
+            page,
+            analysis_pack,
+            visual_asset_catalog,
+            deck_style_guide=deck_style_guide,
+        )
+    except TypeError:
+        return scene_generator(page, analysis_pack, visual_asset_catalog)
+
+
 def build_scene_specs(
     presentation_plan: dict[str, object],
     *,
     analysis_pack: dict[str, Any] | None = None,
     visual_asset_catalog: list[dict[str, object]] | None = None,
     scene_writer: Callable[[dict[str, object]], dict[str, object]] = _default_scene_writer,
-    scene_generator: Callable[[dict[str, object], dict[str, Any], list[dict[str, object]]], dict[str, object]] | None = None,
+    scene_generator: Callable[..., dict[str, object]] | None = None,
+    parallelism: int = 1,
+    deck_style_guide: dict[str, Any] | None = None,
 ) -> list[dict[str, object]]:
     pages = presentation_plan.get("pages", [])
     if not isinstance(pages, list):
         raise ValueError("presentation plan pages must be a list")
     effective_analysis_pack = analysis_pack or {}
     effective_visual_asset_catalog = visual_asset_catalog or []
-    if scene_generator is not None:
-        return [
-            _annotate_scene_debug(
-                scene_generator(page, effective_analysis_pack, effective_visual_asset_catalog),
-                scene_source="generated",
-            )
-            for page in pages
-        ]
-    if scene_writer is _default_scene_writer:
+    effective_deck_style_guide = (
+        deck_style_guide
+        if isinstance(deck_style_guide, dict)
+        else presentation_plan.get("deck_style_guide", {})
+    )
+
+    def build_one(page: dict[str, object]) -> dict[str, object]:
         try:
-            return [
-                _annotate_scene_debug(
+            if scene_generator is not None:
+                return _annotate_scene_debug(
+                    _call_scene_generator(
+                        scene_generator,
+                        page,
+                        effective_analysis_pack,
+                        effective_visual_asset_catalog,
+                        effective_deck_style_guide,
+                    ),
+                    scene_source="generated",
+                )
+            if scene_writer is _default_scene_writer:
+                return _annotate_scene_debug(
                     generate_slide_scene_spec(
                         page,
                         effective_analysis_pack,
                         effective_visual_asset_catalog,
+                        deck_style_guide=effective_deck_style_guide,
                     ),
                     scene_source="generated",
                 )
-                for page in pages
-            ]
+            return _annotate_scene_debug(scene_writer(page), scene_source="generated")
         except Exception:
-            return [scene_writer(page) for page in pages]
+            return scene_writer(page)
+
+    effective_parallelism = max(1, int(parallelism or 1))
+    if effective_parallelism == 1 or len(pages) <= 1:
+        return [build_one(page) for page in pages]
+
+    with ThreadPoolExecutor(max_workers=min(effective_parallelism, len(pages))) as executor:
+        futures = [executor.submit(build_one, page) for page in pages]
+        return [future.result() for future in futures]
+
     return [_annotate_scene_debug(scene_writer(page), scene_source="generated") for page in pages]

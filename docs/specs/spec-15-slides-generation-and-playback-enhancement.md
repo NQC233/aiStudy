@@ -644,3 +644,63 @@
     - 或 `scene_source=generated && is_empty_scene=true`
   - 在没有证据前不要继续强化 prompt 或提升页数门槛，先把“模型真成功 4 页”和“内层 fallback 伪装 success”完全分离。
   - 等证据分离完成后，再决定是先修 fallback ownership，还是先修 Level 2/3 gate。
+
+### 第 22 轮（Level 3/4 并行执行入口与统一主题约束）
+
+- 实际完成内容：
+  - 已在配置层新增：
+    - `slides_scene_parallelism`
+    - `slides_html_parallelism`
+  - `.env.example` 已新增：
+    - `SLIDES_SCENE_PARALLELISM=3`
+    - `SLIDES_HTML_PARALLELISM=3`
+  - 已将 `slide_scene_service.py` 改为支持按页并行生成 `scene_spec`，并保持：
+    - 输出顺序与 `presentation_plan.pages[]` 一致
+    - 单页失败仅回退该页，不再整包一起 fallback
+    - `deck_style_guide` 可透传到每页 scene 生成
+  - 已在 `slide_html_authoring_service.py` 中新增 `render_slide_pages(...)`，支持按页并行渲染 HTML，并保持：
+    - 输出顺序稳定
+    - 单页失败仅回退该页
+    - `deck_style_guide` 可透传到每页 HTML 生成
+    - 保留自定义 renderer 返回的 `render_meta`
+  - 已在 `slide_generation_v2_service.py` 中加入 deck 级风格规范派生与透传：
+    - planner 若显式返回 `deck_style_guide`，则沿用该规范
+    - 若 planner 未返回，则生成最小默认风格规范
+    - scene/html 两层统一消费同一份 `deck_style_guide`
+  - 当前 orchestration 层已把 scene 失败语义切到按页隔离：某一页 scene 失败时，仅该页回落到 `_scene_fallback_from_plan(...)`，而不是让整包 scene 一起退化。
+- 验证结果：
+  - 通过新增定向测试覆盖以下语义：
+    - scene 并行时按页保序
+    - scene 并行时单页失败隔离
+    - scene 层接收同一份 `deck_style_guide`
+    - html 并行时按页保序
+    - html 并行时单页失败隔离
+    - html 层接收同一份 `deck_style_guide`
+    - orchestration 层把统一主题约束同时透传给 scene/html
+  - 已通过命令：
+    - `python -m unittest backend.tests.test_slide_scene_service -v`
+    - `python -m unittest backend.tests.test_slide_html_authoring_service -v`
+    - `python -m unittest backend.tests.test_slide_generation_v2_service.SlideGenerationV2ServiceTests.test_generate_asset_slides_runtime_bundle_propagates_deck_style_guide_to_scene_and_html_layers backend.tests.test_slide_generation_v2_service.SlideGenerationV2ServiceTests.test_generate_asset_slides_runtime_bundle_isolates_parallel_scene_and_html_failures_by_page -v`
+  - 注意：完整 `backend.tests.test_slide_generation_v2_service` 全量回归在当前本地 5 分钟窗口内运行偏慢，说明新的按页隔离测试虽然通过，但 orchestration 级回归仍存在吞吐上的测试时长压力；这是测试执行时间问题，不是当前并行语义验证失败。
+- 结论更新：
+  - Level 3 / Level 4 的并行执行能力已具备最小实现：
+    - planner 串行
+    - scene 按页并行
+    - html 按页并行
+    - 失败按页隔离
+    - 最终结果按原页序汇总
+  - 同一 deck 的统一主题约束已从“提示词要求”升级为“显式契约透传”：scene/html 会共享同一份 `deck_style_guide`。
+- 当前已知缺口：
+  - 当前 `scene` 的 orchestration 仍采用“逐页单次 builder 调用 + builder 内并发能力”的保守实现，功能正确，但在真实多页稿上仍可能存在额外调度开销。
+  - `planner` 层尚未真正产出更丰富的主题规范字段；当前默认 `deck_style_guide` 仍是最小骨架。
+  - 还没有基于真实资产重新跑一次 `debug_target=scene/html/full`，验证真实 10 页稿在新并行入口下的总耗时与稳定性。
+- 后续接手建议：
+  - 下一轮优先用真实资产 `Attention Is All You Need` 重新跑：
+    - `debug_target=scene`
+    - `debug_target=html` 或 `full`
+  - 记录在并行入口下：
+    - 总耗时
+    - 每页 `scene_source`
+    - 每页 `is_empty_scene`
+    - 每页 `html_generation.status`
+  - 若真实多页仍然过慢，再进一步把 orchestration 调整为“单次提交整包 pages 给 scene/html 并在 service 内统一并发调度”，减少当前逐页外层调用开销。

@@ -17,6 +17,7 @@ from app.services.llm_service import describe_visual_asset
 from app.services.retrieval_service import search_asset_chunks
 from app.services.slide_analysis_service import build_asset_slide_analysis_pack
 from app.services.slide_html_authoring_service import render_slide_page
+from app.services.slide_html_authoring_service import render_slide_pages
 from app.services.slide_planning_service import build_presentation_plan
 from app.services.slide_planning_service import build_plan_fallback
 from app.services.slide_planning_service import _validate_presentation_plan
@@ -139,6 +140,13 @@ def _scene_fallback_from_plan(page: dict[str, Any]) -> dict[str, object]:
         "asset_bindings": asset_bindings,
         "animation_plan": {"type": page.get("animation_intent", "soft_intro")},
         "speaker_note_seed": narrative_goal,
+        "_debug": {
+            "scene_source": "fallback",
+            "is_empty_scene": True,
+            "content_blocks_count": 0,
+            "citations_count": 0,
+            "asset_bindings_count": len(asset_bindings),
+        },
     }
 
 
@@ -215,6 +223,55 @@ def _build_empty_runtime_bundle() -> dict[str, object]:
     return {"page_count": 0, "pages": []}
 
 
+def _derive_deck_style_guide(presentation_plan: dict[str, Any]) -> dict[str, Any]:
+    style_guide = presentation_plan.get("deck_style_guide")
+    if isinstance(style_guide, dict):
+        return style_guide
+    return {
+        "theme_name": "paper-academic",
+        "language": "zh-CN",
+        "layout_grammar": "headline-plus-evidence",
+        "citation_style": "inline-footnote",
+        "animation_pacing": "restrained",
+    }
+
+
+def _build_scene_specs_with_page_isolation(
+    active_scene_builder: Callable[..., list[dict[str, object]]],
+    presentation_plan: dict[str, Any],
+    *,
+    analysis_pack: dict[str, Any],
+    visual_asset_catalog: list[dict[str, object]],
+    deck_style_guide: dict[str, Any],
+) -> list[dict[str, Any]]:
+    pages = presentation_plan.get("pages", []) if isinstance(presentation_plan.get("pages"), list) else []
+    scene_specs: list[dict[str, Any]] = []
+    for page in pages:
+        single_page_plan = {
+            **presentation_plan,
+            "page_count": 1,
+            "pages": [page],
+            "deck_style_guide": deck_style_guide,
+        }
+        try:
+            raw_scene_specs = _to_json_safe(
+                active_scene_builder(
+                    single_page_plan,
+                    analysis_pack=analysis_pack,
+                    visual_asset_catalog=_to_json_safe(visual_asset_catalog),
+                    deck_style_guide=deck_style_guide,
+                    parallelism=settings.slides_scene_parallelism,
+                )
+            )
+            if isinstance(raw_scene_specs, list) and raw_scene_specs:
+                scene_specs.append(raw_scene_specs[0])
+                continue
+        except Exception:
+            pass
+        scene_specs.append(_to_json_safe(_scene_fallback_from_plan(page)))
+    return scene_specs
+
+
 def generate_asset_slides_runtime_bundle(
     db: Session,
     *,
@@ -276,12 +333,15 @@ def generate_asset_slides_runtime_bundle(
     scene_specs: list[dict[str, Any]] = []
     rendered_slide_pages: list[dict[str, Any]] = []
     runtime_bundle = _to_json_safe(_build_empty_runtime_bundle())
+    deck_style_guide: dict[str, Any] = {}
 
     if normalized_debug_target != "analysis":
         try:
             raw_plan = _build_validated_plan(active_plan_builder, analysis_pack, _to_json_safe(visual_asset_catalog))
             plan_debug = _extract_plan_debug(raw_plan)
             presentation_plan = _strip_plan_debug(raw_plan)
+            deck_style_guide = _derive_deck_style_guide(presentation_plan)
+            presentation_plan["deck_style_guide"] = deck_style_guide
             pages = presentation_plan.get("pages") if isinstance(presentation_plan, dict) else []
             error_meta["plan_generation"].append(
                 {
@@ -300,6 +360,8 @@ def generate_asset_slides_runtime_bundle(
             )
         except Exception as exc:
             presentation_plan = _to_json_safe(_plan_fallback_from_inputs(analysis_pack, _to_json_safe(visual_asset_catalog)))
+            deck_style_guide = _derive_deck_style_guide(presentation_plan)
+            presentation_plan["deck_style_guide"] = deck_style_guide
             error_meta["plan_generation"].append(
                 {
                     "status": "fallback",
@@ -318,12 +380,12 @@ def generate_asset_slides_runtime_bundle(
 
     if normalized_debug_target not in {"analysis", "plan"}:
         try:
-            raw_scene_specs = _to_json_safe(
-                active_scene_builder(
-                    presentation_plan,
-                    analysis_pack=analysis_pack,
-                    visual_asset_catalog=_to_json_safe(visual_asset_catalog),
-                )
+            raw_scene_specs = _build_scene_specs_with_page_isolation(
+                active_scene_builder,
+                presentation_plan,
+                analysis_pack=analysis_pack,
+                visual_asset_catalog=_to_json_safe(visual_asset_catalog),
+                deck_style_guide=deck_style_guide,
             )
             scene_specs = [_strip_scene_debug(scene_spec) for scene_spec in raw_scene_specs]
             for scene_spec, raw_scene_spec in zip(scene_specs, raw_scene_specs, strict=False):
@@ -331,7 +393,7 @@ def generate_asset_slides_runtime_bundle(
                 error_meta["scene_generation"].append(
                     {
                         "page_id": scene_spec.get("page_id", "unknown"),
-                        "status": "success",
+                        "status": "fallback" if scene_debug.get("scene_source") == "fallback" else "success",
                         "reason": "",
                         "scene_source": scene_debug.get("scene_source", "generated"),
                         "is_empty_scene": bool(scene_debug.get("is_empty_scene", False)),
@@ -353,25 +415,14 @@ def generate_asset_slides_runtime_bundle(
                 )
 
     if normalized_debug_target not in {"analysis", "plan", "scene"}:
-        for scene_spec in scene_specs:
-            try:
-                rendered_slide_pages.append(_to_json_safe(active_html_renderer(scene_spec)))
-                error_meta["html_generation"].append(
-                    {
-                        "page_id": scene_spec.get("page_id", "unknown"),
-                        "status": "success",
-                        "reason": "",
-                    }
-                )
-            except Exception as exc:
-                rendered_slide_pages.append(_to_json_safe(_html_fallback_from_scene(scene_spec)))
-                error_meta["html_generation"].append(
-                    {
-                        "page_id": scene_spec.get("page_id", "unknown"),
-                        "status": "fallback",
-                        "reason": str(exc),
-                    }
-                )
+        rendered_slide_pages, html_meta = render_slide_pages(
+            scene_specs,
+            html_writer=active_html_renderer,
+            parallelism=settings.slides_html_parallelism,
+            deck_style_guide=deck_style_guide,
+        )
+        rendered_slide_pages = [_to_json_safe(page) for page in rendered_slide_pages]
+        error_meta["html_generation"] = [_to_json_safe(item) for item in html_meta]
 
         runtime_bundle = _to_json_safe(runtime_bundle_builder(rendered_slide_pages))
 

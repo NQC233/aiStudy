@@ -279,6 +279,7 @@ def generate_slide_scene_spec(
     analysis_pack: dict[str, Any],
     visual_asset_catalog: list[dict[str, object]],
     *,
+    deck_style_guide: dict[str, Any] | None = None,
     model_caller: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     raw = _call_slides_json_model(
@@ -292,11 +293,13 @@ def generate_slide_scene_spec(
             "必须从 analysis_pack 中挑选与该页最相关的证据，写成具体可展示的页面内容。"
             "优先输出有证据支撑的要点、对比、公式、指标、图表解读和资产说明。"
             "优秀示例：方法页通常会包含 3-5 条有层次的 bullets、1-2 个 citations、必要时绑定 figure/table，而不是只有标题和一句摘要。"
+            "同一份 deck 内所有页面必须遵守同一套 deck_style_guide，保证主题、字体、色彩、版心和引用样式一致。"
         ),
         user_payload={
             "page": page,
             "analysis_pack": analysis_pack,
             "visual_asset_catalog": visual_asset_catalog,
+            "deck_style_guide": deck_style_guide or {},
         },
         model_caller=model_caller,
     )
@@ -316,6 +319,7 @@ def generate_slide_scene_spec(
 def generate_slide_html_page(
     scene_spec: dict[str, Any],
     *,
+    deck_style_guide: dict[str, Any] | None = None,
     model_caller: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     raw = _call_slides_json_model(
@@ -327,8 +331,9 @@ def generate_slide_html_page(
             "你需要把 content_blocks 展开成有层次、有重点、有视觉焦点的单页演示结构，"
             "在可用时应体现图表或资产绑定。"
             "优秀示例：结果页应至少包含标题区、指标/对比区、证据标注区；方法页应至少包含结构说明区和重点解释区，而不是只放一段文字。"
+            "同一份 deck 内所有页面必须遵守同一套 deck_style_guide，保证主题、字体、颜色、间距和引用样式一致。"
         ),
-        user_payload={"scene_spec": scene_spec},
+        user_payload={"scene_spec": scene_spec, "deck_style_guide": deck_style_guide or {}},
         model_caller=model_caller,
     )
     return {
