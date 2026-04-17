@@ -22,8 +22,11 @@ class EmbeddingRequestError(RuntimeError):
 def _resolve_embedding_base_url() -> str:
     if settings.dashscope_embedding_base_url:
         return settings.dashscope_embedding_base_url
-    if settings.dashscope_base_url and "/chat/completions" in settings.dashscope_base_url:
-        return settings.dashscope_base_url.replace("/chat/completions", "/embeddings")
+    if settings.dashscope_base_url:
+        normalized = settings.dashscope_base_url.rstrip("/")
+        if normalized.endswith("/chat/completions"):
+            return normalized.replace("/chat/completions", "/embeddings")
+        return f"{normalized}/embeddings"
     raise EmbeddingConfigurationError("未配置 DASHSCOPE_EMBEDDING_BASE_URL，且无法从 DASHSCOPE_BASE_URL 推导。")
 
 

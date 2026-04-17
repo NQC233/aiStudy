@@ -29,11 +29,6 @@ from app.schemas.note import (
     NoteListResponse,
 )
 from app.schemas.reader import AssetParsedDocumentResponse, AssetPdfDescriptor
-from app.schemas.slide_lesson_plan import (
-    AssetLessonPlanRebuildRequest,
-    AssetLessonPlanRebuildResponse,
-    AssetLessonPlanResponse,
-)
 from app.schemas.slide_dsl import (
     AssetSlideTtsEnsureRequest,
     AssetSlideTtsEnsureResponse,
@@ -45,16 +40,14 @@ from app.schemas.asset_upload import AssetUploadResponse
 from app.schemas.chat import ChatSessionCreateRequest, ChatSessionItem
 from app.services import (
     create_asset_note,
-    enqueue_asset_lesson_plan_rebuild,
-    ensure_asset_slides_schema_up_to_date,
     create_asset_chat_session,
     create_uploaded_asset,
     enqueue_asset_mindmap_rebuild,
     enqueue_asset_chunk_rebuild,
     enqueue_asset_parse_retry,
     ensure_asset_slide_tts,
+    generate_asset_slides_runtime_bundle,
     get_asset_mindmap,
-    get_asset_lesson_plan,
     get_asset_slides_snapshot,
     get_asset_parse_status,
     list_asset_notes,
@@ -74,7 +67,6 @@ from app.services.asset_service import delete_asset, get_asset_detail, list_asse
 from app.workers.tasks import (
     enqueue_build_asset_kb,
     enqueue_generate_asset_mindmap,
-    enqueue_generate_asset_lesson_plan,
     enqueue_generate_asset_slide_tts,
     enqueue_parse_asset,
 )
@@ -189,18 +181,6 @@ def get_asset_parse_endpoint(
 
 
 @router.get(
-    "/{asset_id}/slides/lesson-plan",
-    response_model=AssetLessonPlanResponse,
-    summary="获取资产 lesson_plan 状态与摘要",
-)
-def get_asset_lesson_plan_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
-) -> AssetLessonPlanResponse:
-    """返回 lesson_plan 生成状态、快照与阶段摘要。"""
-    return get_asset_lesson_plan(db, asset_id)
-
-
-@router.get(
     "/{asset_id}/slides",
     response_model=AssetSlidesResponse,
     summary="获取资产 slides DSL 与质量报告",
@@ -209,21 +189,22 @@ def get_asset_slides_endpoint(
     asset_id: str,
     db: Session = Depends(get_db),
 ) -> AssetSlidesResponse:
-    """返回用于播放页渲染的 slides_dsl 与质量报告。"""
-    auto_rebuild_enqueued = False
-    if settings.slides_auto_upgrade_legacy_dsl_enabled:
-        asset, should_enqueue, _ = ensure_asset_slides_schema_up_to_date(db, asset_id)
-        if should_enqueue:
-            strategy = "llm" if settings.slides_llm_enabled else "template"
-            enqueue_generate_asset_lesson_plan.delay(asset.id, strategy=strategy)
-            auto_rebuild_enqueued = True
+    """返回当前可用的 slides 播放快照。"""
+    return get_asset_slides_snapshot(db, asset_id)
 
-    snapshot = get_asset_slides_snapshot(db, asset_id)
-    if auto_rebuild_enqueued:
-        snapshot.slides_status = "processing"
-        snapshot.rebuilding = True
-        snapshot.rebuild_reason = "schema_upgrade_rebuild"
-    return snapshot
+
+@router.post(
+    "/{asset_id}/slides/runtime-bundle/rebuild",
+    response_model=AssetSlidesResponse,
+    summary="重建资产 runtime bundle slides",
+)
+def rebuild_asset_runtime_bundle_slides_endpoint(
+    asset_id: str,
+    db: Session = Depends(get_db),
+) -> AssetSlidesResponse:
+    """同步执行新主链路，生成并持久化 runtime bundle。"""
+    generate_asset_slides_runtime_bundle(db, asset_id=asset_id)
+    return get_asset_slides_snapshot(db, asset_id)
 
 
 @router.post(
@@ -267,28 +248,6 @@ def retry_next_asset_slide_tts_endpoint(
     for slide_key in response.enqueued_slide_keys:
         enqueue_generate_asset_slide_tts.delay(asset_id, slide_key)
     return response
-
-
-@router.post(
-    "/{asset_id}/slides/lesson-plan/rebuild",
-    response_model=AssetLessonPlanRebuildResponse,
-    summary="重建资产 lesson_plan",
-)
-def rebuild_asset_lesson_plan_endpoint(
-    asset_id: str,
-    payload: AssetLessonPlanRebuildRequest,
-    db: Session = Depends(get_db),
-) -> AssetLessonPlanRebuildResponse:
-    """将当前资产推进到 lesson_plan 生成队列。"""
-    asset, should_enqueue, message = enqueue_asset_lesson_plan_rebuild(db, asset_id)
-    if should_enqueue:
-        enqueue_generate_asset_lesson_plan.delay(asset.id, strategy=payload.strategy)
-    return AssetLessonPlanRebuildResponse(
-        asset_id=asset.id,
-        slides_status=asset.slides_status,
-        message=message,
-        strategy=payload.strategy,
-    )
 
 
 @router.post(

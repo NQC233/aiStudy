@@ -151,6 +151,19 @@ class SlidePlaybackPlan(BaseModel):
     pages: list[SlidePlaybackPagePlan] = Field(default_factory=list)
 
 
+class RuntimeRenderedPage(BaseModel):
+    page_id: str
+    html: str
+    css: str
+    asset_refs: list[dict[str, Any]] = Field(default_factory=list)
+    render_meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class SlidesRuntimeBundle(BaseModel):
+    page_count: int = 0
+    pages: list[RuntimeRenderedPage] = Field(default_factory=list)
+
+
 class AssetSlidesResponse(BaseModel):
     asset_id: str
     slides_status: str
@@ -167,6 +180,7 @@ class AssetSlidesResponse(BaseModel):
     playback_status: Literal["not_ready", "ready"] = "not_ready"
     auto_page_supported: bool = False
     slides_dsl: SlidesDslPayload | None = None
+    runtime_bundle: SlidesRuntimeBundle | None = None
     must_pass_report: MustPassReport | None = None
     quality_report: QualityScoreReport | None = None
     fix_logs: list[SlideFixLog] = Field(default_factory=list)

@@ -53,13 +53,18 @@
 - [x] 已补齐资产删除能力：支持 `DELETE /api/assets/{asset_id}`，并执行数据库级联删除 + OSS 双层清理
 - [x] Spec 12D 已收敛闭环；后续 RAG 以回归门禁运行为主，不再作为新功能主线
 - [x] 新增后续双 Spec 主线：Spec 15（演示生成与播放增强）-> Spec 16（前端整体体验优化）
+- [x] Spec 15 主线已改写为 `parsed_json -> analysis -> planning -> scene -> HTML page`，不再以 `lesson_plan/slides_dsl` 为中心
+- [x] Slides 新主线模型栈已确定：`Qwen3.6-Plus` 负责文本分析/视觉理解/HTML 生成，`Qwen-Image-2.0` 作为文生图补位模型
+- [x] Spec 15.1 首轮运行时已改写为纯 HTML/CSS deck runtime，不再以 Reveal.js 为首轮依赖
+- [x] Spec 15 调试观测已补齐 Level 2/3 内层来源标记：现可区分 plan 内层 fallback 与 scene 空壳成功，避免外层 `success` 掩盖真实退化路径
+- [x] Spec 15 已接入 Level 3/4 按页并行执行入口与 deck 级统一风格约束透传：scene/html 现支持配置化并发度、按页失败隔离、按页保序输出
 
 ## 3. 当前待确认事项
 
 - [ ] 引用定位最小粒度最终定为页级、段落级还是句子级（默认：页级 + 段落级）
 - [ ] 思维导图首期是否允许手动编辑（默认：首期只读）
 - [ ] 问答记录是否纳入知识库增量来源（默认：仅持久化，不自动回灌）
-- [ ] 演示文稿最终输出是否需要 HTML 导出（默认：先 Web 播放页）
+- [x] 演示文稿首轮输出形态确定为 Web HTML 播放页；导出能力后置
 - [ ] MinerU 是否需要第二解析策略作为兜底（默认：先单链路 + 重试）
 - [ ] OSS 公网访问地址采用签名 URL 还是受控公开路径（默认：签名 URL）
 
@@ -89,8 +94,8 @@
 
 - [x] Spec 12：TTS 与自动翻页（核心链路已完成，后续演示内容与播放体验增强迁移至 Spec 15）
 - [x] Spec 12D：RAG 评测协议与优化闭环（已锁定 S0(single-turn)、完成 P95 收敛并通过最终回归门禁）
-- [ ] Spec 15：演示文稿生成与播放体验增强（进行中：DSL v2 替换、动态页数与首访自动重建已落地首轮）
-- [ ] Spec 15.1：Slides 播放运行时迁移到 Reveal.js（进行中：Reveal runtime 首轮接入，保留 legacy 回退）
+- [ ] Spec 15：Paper-to-Slides 主生成系统重构（进行中：权威 Spec 已重写，待进入实现）
+- [ ] Spec 15.1：Slides HTML Runtime 与播放壳重构（进行中：权威 Spec 已重写，待进入实现）
 
 ### 待开始
 
@@ -119,10 +124,11 @@
 14. Spec 11B：页面 DSL 生成与分级校验
 15. Spec 11C：演示播放页与工作区入口（当前为自研分页渲染）
 16. Spec 12：TTS 与自动翻页
-17. Spec 15：演示文稿生成与播放体验增强（动态页数 + rich DSL + SlidesPlay）
-18. Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay）
-19. Spec 13：Anki CSV 导出
-20. Spec 14：课后习题
+17. Spec 15：Paper-to-Slides 主生成系统重构（analysis + planning + scene + HTML page）
+18. Spec 15.1：Slides HTML Runtime 与播放壳重构
+19. Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay）
+20. Spec 13：Anki CSV 导出
+21. Spec 14：课后习题
 
 ## 6. 每轮开发完成后必须更新的内容
 
@@ -1762,6 +1768,273 @@
   - 进入 Spec 15.1 第 8 轮：加入“渲染实测 overflow critic + 自动重写”闭环。
 - 建议提交信息：
   - `feat: enforce director visual tones and verbatim-copy guard for slides`
+
+### Spec 15 迁移记录（主目录对齐：Task 1-5 代码迁回 main workspace）
+
+- 完成内容：
+  - 已将 `.worktrees/spec15-task1` 中与当前主目录权威 Spec 15 / 15.1 方向一致的 Task 1-5 代码迁回主目录。
+  - 后端已迁回：
+    - `backend/app/services/slide_analysis_service.py`
+    - `backend/app/services/slide_visual_asset_service.py`
+    - `backend/app/services/slide_planning_service.py`
+    - `backend/app/services/slide_scene_service.py`
+    - `backend/app/services/slide_html_authoring_service.py`
+    - `backend/app/services/slide_runtime_bundle_service.py`
+    - `backend/app/services/llm_service.py` 中的 `describe_visual_asset`
+  - 后端测试已迁回：
+    - `backend/tests/test_slide_analysis_service.py`
+    - `backend/tests/test_slide_visual_asset_service.py`
+    - `backend/tests/test_slide_planning_service.py`
+    - `backend/tests/test_slide_scene_service.py`
+    - `backend/tests/test_slide_html_authoring_service.py`
+    - `backend/tests/test_llm_service.py` 中的 visual asset hook 用例
+  - 前端已迁回：
+    - `frontend/src/components/slides/HtmlSlideFrame.vue`
+    - `frontend/src/components/slides/SlidesDeckRuntime.vue`
+    - `frontend/src/api/assets.ts` 中 `runtime_bundle` 类型扩展
+    - `frontend/src/pages/slides/SlidesPlayPage.vue` 中 HTML runtime 主路径切换
+  - 未迁回的内容：
+    - `frontend/src/pages/slides/__tests__/slides-runtime.spec.ts` 暂未迁回主目录，因为当前前端主目录尚未安装/配置 `vitest` 与 `@vue/test-utils`，直接迁回会破坏 `npm run build`。
+- 验证结果：
+  - 后端迁回验证通过：
+    - `cd backend && python -m unittest tests.test_slide_analysis_service tests.test_slide_visual_asset_service tests.test_slide_planning_service tests.test_slide_scene_service tests.test_slide_html_authoring_service tests.test_llm_service -v`
+    - 结果：16 tests, 0 failures, `OK`
+  - 前端迁回验证通过：
+    - `cd frontend && npm run build`
+    - 结果：build 成功
+- 当前已知缺口：
+  - 从仓库根目录运行 backend unittest 仍会触发当前 `.env` 与 `backend/app/core/config.py` 的历史不一致问题：`.env` 中存在 `Settings` 未声明字段，导致 root-level import 失败。这是主目录原有配置问题，不是本次迁回代码引入的问题。
+  - Task 5 的前端 runtime 测试文件仍待后续补齐测试基础设施后再落回主目录。
+  - `SlidesPlayPage.vue` 对 HTML runtime 已完成主舞台切换，但 notes/citations/TTS 仍保留兼容性降级，尚未完全接入新 payload 元数据。
+- 下一轮建议：
+  - 在主目录继续进入 Task 6 开发；开始前只需记住 backend 测试应从 `backend/` 目录运行，或先统一修复 `.env` / `Settings` 历史配置问题。
+- 建议提交信息：
+  - `refactor: migrate spec15 task 1-5 scaffolds into main workspace`
+
+### Spec 15 Task 6 记录（旧 slides pipeline 清理完成）
+
+- 完成内容：
+  - 已重写 `backend/tests/test_spec15_slides_pipeline.py`，将 smoke test 收束到新主链路 service surface：`slide_analysis_service`、`slide_visual_asset_service`、`slide_planning_service`、`slide_scene_service`、`slide_html_authoring_service`、`slide_runtime_bundle_service`。
+  - 已从 `backend/app/services/__init__.py` 移除旧 lesson-plan / DSL rebuild 导出，并加入新主链路 service 导出。
+  - 已删除旧 backend 生成链路文件：
+    - `backend/app/services/slide_lesson_plan_service.py`
+    - `backend/app/services/slide_outline_service.py`
+    - `backend/app/services/slide_markdown_service.py`
+    - `backend/app/services/slide_dsl_compiler_service.py`
+    - `backend/app/services/slide_fix_service.py`
+    - `backend/app/services/slide_director_plan_service.py`
+    - `backend/app/services/slide_quality_service.py`
+    - `backend/app/schemas/slide_lesson_plan.py`
+  - 已删除旧 backend 测试：
+    - `backend/tests/test_slide_lesson_plan_service.py`
+    - `backend/tests/test_slide_dsl_quality_flow.py`
+  - 已从 `backend/app/api/routes/assets.py` 移除旧 lesson-plan 读取/重建路由，并移除旧自动 schema 升级重建逻辑。
+  - 已从 `backend/app/workers/tasks.py` 移除旧 lesson-plan 与 slides DSL 生成任务。
+  - 已将 `backend/app/services/slide_dsl_service.py` 改为 `runtime_bundle` 优先的 snapshot adapter：
+    - 优先读取持久化的 `presentation.runtime_bundle`
+    - 若历史数据仅有 `presentation.slides_dsl`，则通过最小兼容适配生成 HTML runtime 页面壳，避免旧存量直接失效
+    - `/slides` 响应不再向前端暴露 `slides_dsl`
+  - 已新增 `backend/tests/test_slide_runtime_snapshot_service.py`，覆盖 `runtime_bundle` 优先返回契约。
+  - 已清理前端旧 runtime 残留：
+    - 删除 `frontend/src/components/slides/RevealSlidesDeck.vue`
+    - 删除 `frontend/src/components/slides/SlideBlockRenderer.vue`
+    - 删除 `frontend/src/components/slides/SafeSvgRenderer.vue`
+    - 删除 Workspace 与 SlidesPlay 中仍调用旧 `slides/lesson-plan/rebuild` 接口的逻辑
+    - 删除 Workspace 中残留的 `runtime=reveal` 导航参数
+- 验证结果：
+  - `cd backend && python -m unittest tests.test_spec15_slides_pipeline -v` 已通过。
+  - `cd backend && python -m unittest tests.test_spec15_slides_pipeline tests.test_slide_runtime_snapshot_service tests.test_slide_analysis_service tests.test_slide_visual_asset_service tests.test_slide_planning_service tests.test_slide_scene_service tests.test_slide_html_authoring_service tests.test_llm_service -v` 已通过，结果：19 tests, 0 failures, `OK`。
+  - `cd frontend && npm run build` 已通过。
+- 当前已知缺口：
+  - `Presentation` 模型与数据库层仍保留 `lesson_plan` / `slides_dsl` 等历史字段；本轮已停止主路径使用，但尚未做数据迁移和列级清理。
+  - `slide_playback_service.py` 与 `slide_tts_service.py` 仍面向旧 `slides_dsl` block 结构，这部分暂未重写为真正的 `runtime_bundle` / page-level metadata 驱动。
+- 下一轮建议：
+  - 进入下一阶段时，优先把 TTS/playback 内核从 `slides_dsl` 切换到 page-level runtime metadata，并再决定是否做 `Presentation` 历史字段的数据迁移与 schema 清理。
+- 建议提交信息：
+  - `refactor: finish slides runtime pipeline cleanup`
+
+### Spec 15 后续推进记录（新链路正式入口，第 1 轮）
+
+- 完成内容：
+  - 已新增 `backend/app/schemas/slide_generation_v2.py`，为新主链路产物提供顶层 schema：`analysis_pack`、`visual_asset_catalog`、`presentation_plan`、`scene_specs`、`rendered_slide_pages`、`runtime_bundle`。
+  - 已新增 `backend/app/services/slide_generation_v2_service.py`，提供 `generate_asset_slides_runtime_bundle(...)` 作为新主链路的正式 orchestration entrypoint。
+  - 已在 `backend/app/models/presentation.py` 中补充新主链路持久化字段：
+    - `analysis_pack`
+    - `visual_asset_catalog`
+    - `presentation_plan`
+    - `scene_specs`
+    - `rendered_slide_pages`
+    - `runtime_bundle`
+  - 已在 `backend/app/core/config.py` 中补齐 slides 专用模型配置字段：
+    - `dashscope_slides_analysis_model_name`
+    - `dashscope_slides_vision_model_name`
+    - `dashscope_slides_html_model_name`
+    - `dashscope_image_base_url`
+    - `dashscope_image_model_name`
+  - 已在 `backend/app/services/llm_service.py` 中新增 `get_slides_model_config(task_name)`，统一读取 slides analysis / vision / html / image 的模型配置。
+  - 已新增 `backend/tests/test_slide_generation_v2_service.py`，验证新主链路可以把顶层 artifact 写入 presentation 并返回 `runtime_bundle`。
+- 验证结果：
+  - `cd backend && python -m unittest tests.test_slide_generation_v2_service -v` 已通过。
+  - `cd backend && python -m unittest tests.test_spec15_slides_pipeline tests.test_slide_generation_v2_service tests.test_slide_runtime_snapshot_service tests.test_slide_analysis_service tests.test_slide_visual_asset_service tests.test_slide_planning_service tests.test_slide_scene_service tests.test_slide_html_authoring_service tests.test_llm_service -v` 已通过，结果：20 tests, 0 failures, `OK`。
+- 当前已知缺口：
+  - 新 orchestration service 当前仍以可注入 builder 为主，尚未把真实 retrieval / parse_normalizer / Qwen3.6-Plus / Qwen-Image-2.0 调用正式串入。
+  - `assets.py` / Celery task 层还没有为该新入口提供正式 API 与异步执行路径。
+  - 尚未完成真实论文样例的 top-5 query-family 验证与整条新主链路 E2E 跑通记录。
+- 下一轮建议：
+  - 优先把 `generate_asset_slides_runtime_bundle(...)` 接到真实 `parsed_json` / retrieval / visual asset / LLM builder 上，并至少选一篇真实论文完成一次端到端跑通。
+- 建议提交信息：
+  - `feat: add slide generation v2 orchestration scaffold`
+
+### Spec 15 后续推进记录（新链路真实接线路径，第 1 轮）
+
+- 完成内容：
+  - 已将 `generate_asset_slides_runtime_bundle(...)` 接到真实 `parsed_json` 读取路径：当未显式传入 `parsed_payload` 时，默认通过 `get_asset_parsed_document()` 加载当前资产的标准化解析结果。
+  - 已为 planning / scene / html 层补充最小默认 builder，使新主链路在不注入测试 lambda 的情况下也可被真实调用。
+  - 已新增 backend 触发入口：`POST /api/assets/{asset_id}/slides/runtime-bundle/rebuild`，用于同步执行新主链路并回读最新 `/slides` snapshot。
+  - 已扩展 `backend/tests/test_slide_generation_v2_service.py`，验证 service 会在 `parsed_payload` 缺失时走真实加载路径。
+- 验证结果：
+  - `cd backend && python -m unittest tests.test_slide_generation_v2_service -v` 已通过，结果：2 tests, 0 failures, `OK`。
+  - `cd backend && python -m unittest tests.test_spec15_slides_pipeline tests.test_slide_generation_v2_service tests.test_slide_runtime_snapshot_service tests.test_slide_analysis_service tests.test_slide_visual_asset_service tests.test_slide_planning_service tests.test_slide_scene_service tests.test_slide_html_authoring_service tests.test_llm_service -v` 已通过，结果：21 tests, 0 failures, `OK`。
+- 当前已知缺口：
+  - 当前默认 analysis 路径仍使用 placeholder retrieval 响应兜底，尚未真正调用 `search_asset_chunks` / rerank / query-family top-5 验证链路。
+  - 当前默认 visual / planning / scene / html builder 仍是最小可运行实现，并未真正调用 `Qwen3.6-Plus` / `Qwen-Image-2.0` 生成内容。
+  - 新入口目前为同步 API，尚未接到 Celery 异步执行路径。
+- 下一轮建议：
+  - 优先把 analysis 默认路径接到真实 retrieval service，并增加一篇真实论文样例的 top-5 验证与一次完整 E2E 运行记录。
+- 建议提交信息：
+  - `feat: wire runtime bundle generation to parsed json path`
+
+### Spec 15 后续推进记录（analysis 默认路径接入真实 retrieval）
+
+- 完成内容：
+  - 已将 `slide_generation_v2_service.py` 中的 analysis 默认路径从 placeholder retrieval 响应替换为真实 `search_asset_chunks(...)` 调用。
+  - 新主链路默认 analysis 现在会通过 `build_asset_slide_analysis_pack(...)` 按固定 query families 执行真实检索，并沿用现有 `top_k=5`、`rewrite_query=False`、`strategy="s0"` 契约。
+  - 已新增测试覆盖 `search_asset_chunks` 的调用契约，确认 orchestration service 会把 asset_id / query / top_k / rewrite_query / strategy 正确传入真实 retrieval seam。
+- 验证结果：
+  - `cd backend && python -m unittest tests.test_slide_generation_v2_service -v` 已通过，结果：3 tests, 0 failures, `OK`。
+  - `cd backend && python -m unittest tests.test_spec15_slides_pipeline tests.test_slide_generation_v2_service tests.test_slide_runtime_snapshot_service tests.test_slide_analysis_service tests.test_slide_visual_asset_service tests.test_slide_planning_service tests.test_slide_scene_service tests.test_slide_html_authoring_service tests.test_llm_service -v` 已通过，结果：22 tests, 0 failures, `OK`。
+- 当前已知缺口：
+  - 当前只是把 analysis 默认路径接到真实 retrieval service；尚未完成 spec 5.3 要求的真实论文样例 top-5 召回质量评估与结果记录。
+  - visual / planning / scene / html 默认 builder 仍是最小可运行实现，尚未真正调用 `Qwen3.6-Plus` / `Qwen-Image-2.0`。
+  - 还没有执行一篇真实论文的完整 E2E 运行验证。
+- 下一轮建议：
+  - 直接选一篇真实论文资产，调用 `POST /api/assets/{asset_id}/slides/runtime-bundle/rebuild` 或 service 入口，记录 query-family top-5 召回与整条新链路运行结果。
+- 建议提交信息：
+  - `feat: connect slide analysis to retrieval service`
+
+### Spec 15 后续推进记录（Layer 1 结构化分析与 LLM 主链路默认接线）
+
+- 完成内容：
+  - 已将 `backend/app/services/slide_analysis_service.py` 中的 `SlideAnalysisPack` 从仅保存 `query_family_hits` 扩展为 Layer 1 可直接消费的结构化信息包，新增：
+    - `document_outline`
+    - `problem_statements`
+    - `method_components`
+    - `method_steps`
+    - `key_formulas`
+    - `datasets_metrics`
+    - `main_results`
+    - `ablations`
+    - `limitations`
+    - `evidence_catalog`
+  - `summarize_slide_analysis_pack(...)` 现在会在规则过滤后直接从 query-family hits 提取上述结构化字段，为 Spec 15 Layer 1 的 `analysis_pack` 提供正式输入，而不是只透传 raw retrieval hits。
+  - `backend/app/core/config.py` 已放宽 `Settings` 对 `.env` 额外字段的处理为 `extra="ignore"`，修复根目录运行 unittest 时被历史前后端混合环境变量阻塞的问题。
+  - 已在 `backend/app/services/llm_service.py` 中新增 slides 主链路的 JSON 调用封装与三个默认 builder：
+    - `generate_slides_presentation_plan(...)`
+    - `generate_slide_scene_spec(...)`
+    - `generate_slide_html_page(...)`
+  - 已将 `slide_planning_service.py`、`slide_scene_service.py`、`slide_html_authoring_service.py` 的默认实现改为：优先尝试调用 `Qwen3.6-Plus` 生成 JSON 结果，失败时再回退到原有最小模板兜底。
+  - 已在 `slide_generation_v2_service.py` 中增加 `llm_enabled` / `llm_plan_builder` / `llm_scene_builder` / `llm_html_renderer` 切换路径，确保主 orchestration service 可以明确走 LLM 版本 builder，而不是只能使用模板占位实现。
+- 验证结果：
+  - `python -m unittest backend.tests.test_slide_analysis_service -v` 已通过，结果：8 tests, 0 failures, `OK`。
+  - `python -m unittest backend.tests.test_slide_generation_v2_service -v` 已通过，结果：4 tests, 0 failures, `OK`。
+  - `python -m unittest backend.tests.test_llm_service -v` 已通过，结果：5 tests, 0 failures, `OK`。
+  - `python -m unittest backend.tests.test_slide_planning_service backend.tests.test_slide_scene_service backend.tests.test_slide_html_authoring_service -v` 已通过，结果：4 tests, 0 failures, `OK`。
+  - `python -m unittest backend.tests.test_spec15_slides_pipeline backend.tests.test_slide_analysis_service backend.tests.test_slide_generation_v2_service -v` 已通过，结果：14 tests, 0 failures, `OK`。
+  - 本地真实接口验证已执行：
+    - `POST /api/assets/719c3918-e6a4-451a-9681-f06b673ce394/slides/runtime-bundle/rebuild`
+    - `GET /api/assets/719c3918-e6a4-451a-9681-f06b673ce394/slides`
+    - 两者当前均返回 `500`
+    - root cause 已定位为数据库缺少新列：`presentations.visual_asset_catalog`，说明运行环境尚未应用与 `Presentation` 新字段对应的 migration
+- 当前已知缺口：
+  - Spec 5.3 要求的真实论文 query-family top-5 召回验收仍未形成正式文档化结论；fix 分支做过 live 复验，但 `feat` 主线尚未把结果固化到当前 implementation round 的验收记录中。
+  - 本地真实 E2E 当前被数据库 schema 阻塞，而不是被新主链路 Python 代码阻塞；需要先补齐/执行 `Presentation` 新字段的 Alembic migration，才能继续验证真实 `runtime_bundle` 生成结果。
+  - visual asset catalog 目前虽已接到真实描述入口，但 `Qwen-Image-2.0` 补位路径仍未正式加入生成决策闭环。
+- 下一轮建议：
+  - 优先补齐 `Presentation` 新字段的数据库 migration，并在本地容器环境执行升级；随后重新对 `Attention Is All You Need` 资产跑一次 `runtime-bundle/rebuild`，记录完整的 analysis/plan/scene/html/runtime 产物与失败点。
+  - 在 migration 解锁后，补一轮真实 query-family top-5 验证结果归档，把 retrieval quality 从“代码与 live 试验”提升为“Spec 验收记录”。
+- 建议提交信息：
+  - `feat: structure slide analysis pack and wire llm builders`
+
+### Spec 15 后续推进记录（数据库迁移补齐与真实 runtime-bundle E2E 解锁）
+
+- 完成内容：
+  - 已新增 Alembic migration：`backend/alembic/versions/20260415_0011_add_slide_generation_v2_fields_to_presentations.py`，为 `presentations` 表补齐新主链路所需字段：
+    - `visual_asset_catalog`
+    - `presentation_plan`
+    - `scene_specs`
+    - `rendered_slide_pages`
+    - `runtime_bundle`
+  - 发现本地数据库 Alembic 版本已漂移到仓库中缺失的 `20260414_0013`，已新增桥接 revision：`backend/alembic/versions/20260414_0013_reconcile_local_presentation_schema.py`，将其收编为 no-op bridge，避免本地环境无法继续升级。
+  - 已将 `20260415_0011` migration 改为对列存在性安全增量，兼容当前本地已漂移的 `presentations` 表。
+  - 已修复新主链路真实 rebuild 时的 JSON 持久化错误：`slide_generation_v2_service.py` 现在会在写入 `Presentation` 前把 `analysis_pack` / `presentation_plan` / `scene_specs` / `runtime_bundle` 递归转换为 JSON-safe 结构，避免 `RetrievalSearchHit` 等 Pydantic 对象直接写入 JSONB 导致 `TypeError`。
+  - 已对真实资产 `719c3918-e6a4-451a-9681-f06b673ce394` 重新执行 `runtime-bundle/rebuild` 并回读 `/slides` 快照。
+- 验证结果：
+  - `docker compose exec -T backend alembic upgrade head` 已通过，数据库版本升级到 `20260415_0011`。
+  - `docker compose exec -T postgres psql -U paper_user -d paper_learning -c "select version_num from alembic_version;"` 返回 `20260415_0011`。
+  - `docker compose exec -T postgres psql -U paper_user -d paper_learning -c "select column_name from information_schema.columns where table_name='presentations' order by ordinal_position;"` 已确认新列存在。
+  - `python -m unittest backend.tests.test_slide_generation_v2_service -v` 已通过，结果：5 tests, 0 failures, `OK`。
+  - 真实 API 验证：
+    - `POST /api/assets/719c3918-e6a4-451a-9681-f06b673ce394/slides/runtime-bundle/rebuild` 返回 `200`
+    - 顺序执行 `GET /api/assets/719c3918-e6a4-451a-9681-f06b673ce394/slides` 返回 `200`
+    - `/slides` 已读回 `runtime_bundle.page_count=1`、`playback_status=ready`、`auto_page_supported=true`
+- 当前已知缺口：
+  - 虽然真实主链路已跑通，但当前产物仍是最小可运行内容：`runtime_bundle.page_count=1`，页面文案仍为 `Paper Overview` 级别的兜底内容，说明 LLM/analysis/planning 的内容质量还未达到 Spec 15 目标状态。
+  - 真实 top-5 query-family 验证结论仍未以主线验收形式固化到本轮记录中。
+  - `GET /slides` 若与 `POST /runtime-bundle/rebuild` 并行触发，可能读到旧快照；验证时需要串行读取最终状态。
+- 下一轮建议：
+  - 继续提升 `analysis_pack -> presentation_plan -> scene_spec` 的真实内容密度，优先让 `Attention Is All You Need` 从 1 页兜底产物提升为符合 narrative 的多页 runtime bundle。
+  - 把 retrieval family 的真实 top-5 验证结果和当前 rebuild 产物一起整理成 Spec 15 主线验收记录。
+- 建议提交信息：
+  - `fix: unblock spec15 runtime bundle rebuild persistence`
+
+### Spec 15 后续推进记录（分层 Debug 入口与中文 Prompt 对齐）
+
+- 完成内容：
+  - 已在 `backend/app/services/slide_generation_v2_service.py` 中新增分层 debug 停靠能力：`generate_asset_slides_runtime_bundle(...)` 现在支持 `debug_target=analysis|plan|scene|html|full`，可在任一层完成后停止并持久化当前产物，而不是每次都跑完整链路。
+  - 已为该能力补充测试，确认：
+    - `debug_target="analysis"` 时只生成 `analysis_pack + visual_asset_catalog`
+    - `debug_target="plan"` 时会继续生成 `presentation_plan`，但不会继续进入 scene/html
+  - 已将 slides 相关 LLM system prompt 改为中文主提示词，覆盖：
+    - `generate_slides_presentation_plan(...)`
+    - `generate_slide_scene_spec(...)`
+    - `generate_slide_html_page(...)`
+  - 中文 prompt 现已显式强调：
+    - 用户可见文案必须为中文
+    - rich analysis 下禁止退化为单页 overview
+    - `content_blocks` 不能为空
+    - HTML 应生成单页 16:9 演示结构，避免轻易退化为 `title+paragraph`
+  - 已对真实资产 `719c3918-e6a4-451a-9681-f06b673ce394` 进行分层 debug 取证：
+    - `Level 1 / analysis`：通过，`problem/method/result/ablation/limitation` 均为 5 条，`visual_asset_catalog=9`
+    - `Level 2 / plan`：失败，rich analysis 条件下 planner 仍退化为 1 页，触发 `presentation plan collapsed rich analysis into too few pages`
+    - `Level 3 / scene`：形式成功但内容不合格，当前落库 scene 仍为 `title=Paper Overview`、`summary_line=Paper Overview`、`content_blocks=[]`、`citations=[]`
+    - `Level 4 / html`：对当前空壳 scene 单独渲染时可生成较丰富 HTML，说明 HTML 层不是当前主根因，上游 scene 输入质量不足更关键
+- 验证结果：
+  - `python -m unittest backend.tests.test_llm_service.LlmServiceTests.test_generate_slides_presentation_plan_prompt_requires_chinese_output backend.tests.test_llm_service.LlmServiceTests.test_generate_slide_scene_spec_prompt_requires_non_empty_chinese_content_blocks backend.tests.test_llm_service.LlmServiceTests.test_generate_slide_html_page_prompt_requires_chinese_not_title_paragraph_fallback` 已通过。
+  - `python -m unittest backend.tests.test_slide_generation_v2_service.SlideGenerationV2ServiceTests.test_generate_asset_slides_runtime_bundle_can_stop_after_analysis_layer backend.tests.test_slide_generation_v2_service.SlideGenerationV2ServiceTests.test_generate_asset_slides_runtime_bundle_can_stop_after_plan_layer` 已通过。
+  - `python -m unittest backend.tests.test_llm_service backend.tests.test_slide_generation_v2_service backend.tests.test_slide_planning_service backend.tests.test_slide_scene_service backend.tests.test_slide_html_authoring_service` 运行后仅剩 2 个已知失败：
+    - 本地 `.env` 中旧 `DASHSCOPE_BASE_URL`
+    - 旧测试断言仍期待 `empty plan` 文案
+  - 真实分层 debug 在 `backend` 容器内执行成功，已拿到 `analysis -> plan -> scene -> html` 分层证据。
+- 当前已知缺口：
+  - `Level 2` 当前仍没有 repair / replan 路径；coverage gate 识别到单页退化后，只会 fallback 到单页兜底 plan。
+  - `Level 3` 默认 scene 结果虽然“请求成功”，但仍可能产出空壳 scene，需要继续加强 prompt、输入裁剪或 scene gate。
+  - API 层尚未暴露 `debug_target` 参数；当前分层 debug 仍通过 service 入口进行。
+- 下一轮建议：
+  - 先围绕 `Level 2` 实现 planner digest + replan/retry，确保 rich analysis 时不会直接落入单页 fallback。
+  - 然后为 `Level 3` 增加 scene gate，阻止 `content_blocks=[]`、`citations=[]` 的“成功但无效”场景继续下游流转。
+  - 如需产品侧操作入口，再考虑把 `debug_target` 作为仅开发环境可用的 API 参数暴露出来。
+- 建议提交信息：
+  - `feat: add staged slides debug flow and chinese prompts`
 
 ## 7. 相关文档
 

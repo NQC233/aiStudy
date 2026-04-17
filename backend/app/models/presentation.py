@@ -27,6 +27,16 @@ class Presentation(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     lesson_plan: Mapped[dict | None] = mapped_column(JSONB)
     slides_dsl: Mapped[dict | None] = mapped_column(JSONB)
+    analysis_pack: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    visual_asset_catalog: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    presentation_plan: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    scene_specs: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
+    rendered_slide_pages: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    runtime_bundle: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     tts_manifest: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     playback_plan: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     dsl_quality_report: Mapped[dict] = mapped_column(

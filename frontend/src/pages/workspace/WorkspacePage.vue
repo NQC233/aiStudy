@@ -57,9 +57,6 @@ const loading = ref(false);
 const errorMessage = ref('');
 const resourceWarning = ref('');
 const mindmapError = ref('');
-const slidesActionMessage = ref('');
-const slidesActionError = ref('');
-const slidesStrategy = ref<'template' | 'llm'>('llm');
 const retrying = ref(false);
 const rebuildingMindmap = ref(false);
 const rebuildingSlides = ref(false);
@@ -435,30 +432,7 @@ async function openSlidesPage() {
   await router.push({
     name: 'slides-play',
     params: { assetId: assetId.value },
-    query: { runtime: 'reveal' },
   });
-}
-
-async function handleRebuildSlides() {
-  if (rebuildingSlides.value) {
-    return;
-  }
-  rebuildingSlides.value = true;
-  slidesActionError.value = '';
-  slidesActionMessage.value = '';
-
-  try {
-    const response = await rebuildAssetSlides(assetId.value, slidesStrategy.value);
-    slidesActionMessage.value = `${response.message}（策略：${response.strategy}）`;
-    if (response.slides_status === 'processing') {
-      slidesProcessingSince.value = Date.now();
-    }
-    await loadWorkspace();
-  } catch (error) {
-    slidesActionError.value = normalizeErrorMessage(error, '重建演示内容失败。');
-  } finally {
-    rebuildingSlides.value = false;
-  }
 }
 
 async function loadWorkspace() {
@@ -561,6 +535,33 @@ async function handleRebuildMindmap() {
     mindmapError.value = normalizeErrorMessage(error, '重建导图失败。');
   } finally {
     rebuildingMindmap.value = false;
+  }
+}
+
+async function handleRebuildSlides() {
+  rebuildingSlides.value = true;
+  errorMessage.value = '';
+
+  if (asset.value) {
+    asset.value = {
+      ...asset.value,
+      enhanced_resources: {
+        ...asset.value.enhanced_resources,
+        slides_status: 'processing',
+      },
+    };
+    syncSlidesProcessingClock('processing');
+    syncParsePolling();
+  }
+
+  try {
+    await rebuildAssetSlides(assetId.value);
+    await refreshWorkspaceLight();
+  } catch (error) {
+    errorMessage.value = normalizeErrorMessage(error, '重新生成演示内容失败。');
+    await refreshWorkspaceLight();
+  } finally {
+    rebuildingSlides.value = false;
   }
 }
 
@@ -1083,13 +1084,14 @@ onUnmounted(() => {
             {{ asset.abstract || '当前资产还没有摘要内容，后续会由解析链路补充。' }}
           </p>
           <div class="workspace-actions">
-            <label class="workspace-muted">
-              <span>生成策略</span>
-              <select v-model="slidesStrategy" class="workspace-notes-filter">
-                <option value="template">template（稳定）</option>
-                <option value="llm">llm（灰度）</option>
-              </select>
-            </label>
+            <button
+              class="toolbar-button toolbar-button--ghost"
+              type="button"
+              :disabled="rebuildingSlides || slidesStatus === 'processing'"
+              @click="handleRebuildSlides"
+            >
+              {{ rebuildingSlides ? '重建中...' : '重新生成演示内容' }}
+            </button>
             <button
               class="toolbar-button"
               type="button"
@@ -1098,21 +1100,7 @@ onUnmounted(() => {
             >
               {{ canOpenSlides ? '进入演示播放页' : '演示内容未就绪' }}
             </button>
-            <button
-              class="toolbar-button toolbar-button--ghost"
-              type="button"
-              :disabled="rebuildingSlides"
-              @click="handleRebuildSlides"
-            >
-              {{ rebuildingSlides ? '生成中...' : '重新生成演示内容' }}
-            </button>
           </div>
-          <p v-if="slidesActionMessage" class="workspace-muted">
-            {{ slidesActionMessage }}
-          </p>
-          <p v-if="slidesActionError" class="workspace-parse-error">
-            {{ slidesActionError }}
-          </p>
           <p v-if="slidesLocatorHint" class="workspace-muted">
             {{ slidesLocatorHint }}
           </p>

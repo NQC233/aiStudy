@@ -33,15 +33,25 @@ from app.services.retrieval_service import (
     run_asset_kb_pipeline,
     search_asset_chunks,
 )
-from app.services.slide_lesson_plan_service import (
-    enqueue_asset_lesson_plan_rebuild,
-    get_asset_lesson_plan,
-    run_asset_lesson_plan_pipeline,
+from app.services.slide_analysis_service import (
+    build_asset_slide_analysis_pack,
+    build_slide_analysis_pack,
+    filter_slide_retrieval_hits,
+    summarize_slide_analysis_pack,
 )
 from app.services.slide_dsl_service import (
-    ensure_asset_slides_schema_up_to_date,
     get_asset_slides_snapshot,
-    run_asset_slides_dsl_pipeline,
+)
+from app.services.slide_generation_v2_service import (
+    generate_asset_slides_runtime_bundle,
+)
+from app.services.slide_html_authoring_service import render_slide_page
+from app.services.slide_planning_service import build_presentation_plan
+from app.services.slide_runtime_bundle_service import build_runtime_bundle
+from app.services.slide_scene_service import build_scene_specs
+from app.services.slide_visual_asset_service import (
+    build_visual_asset_cards,
+    extract_asset_surrounding_context,
 )
 from app.services.slide_tts_service import (
     ensure_asset_slide_tts,
@@ -63,13 +73,21 @@ __all__ = [
     "list_asset_chat_sessions",
     "list_chat_session_messages",
     "get_asset_parse_status",
+    "build_asset_slide_analysis_pack",
+    "build_slide_analysis_pack",
+    "filter_slide_retrieval_hits",
+    "summarize_slide_analysis_pack",
+    "build_visual_asset_cards",
+    "extract_asset_surrounding_context",
+    "build_presentation_plan",
+    "build_scene_specs",
+    "render_slide_page",
+    "build_runtime_bundle",
+    "generate_asset_slides_runtime_bundle",
     "list_assets",
     "list_asset_notes",
     "run_parse_pipeline",
     "run_asset_mindmap_pipeline",
-    "run_asset_lesson_plan_pipeline",
-    "run_asset_slides_dsl_pipeline",
-    "ensure_asset_slides_schema_up_to_date",
     "get_asset_slides_snapshot",
     "ensure_asset_slide_tts",
     "retry_next_asset_slide_tts",
@@ -77,8 +95,6 @@ __all__ = [
     "run_asset_kb_pipeline",
     "search_asset_chunks",
     "seed_dev_user_and_assets",
-    "enqueue_asset_lesson_plan_rebuild",
-    "get_asset_lesson_plan",
     "create_asset_note",
     "update_note",
     "delete_note",
