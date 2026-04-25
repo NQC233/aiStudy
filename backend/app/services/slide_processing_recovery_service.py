@@ -4,11 +4,16 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from celery.result import AsyncResult
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+_ACTIVE_TASK_STATES = {"PENDING", "RECEIVED", "STARTED", "RETRY", "SUCCESS"}
 
 
 def _coerce_datetime(value: object) -> datetime | None:
@@ -28,6 +33,21 @@ def _latest_processing_timestamp(asset: object, presentation: object | None) -> 
     if not available:
         return None
     return max(available)
+
+
+def _get_task_runtime_state(task_id: str) -> str | None:
+    task_id = task_id.strip()
+    if not task_id:
+        return None
+    try:
+        state = AsyncResult(task_id, app=celery_app).state
+    except Exception:
+        logger.exception("Failed to inspect slides task state: task_id=%s", task_id)
+        return None
+    if not isinstance(state, str):
+        return None
+    normalized_state = state.strip().upper()
+    return normalized_state or None
 
 
 def recover_stale_slides_processing(
@@ -50,6 +70,18 @@ def recover_stale_slides_processing(
     now = datetime.now(UTC).timestamp()
     if now < stale_deadline:
         return None
+
+    active_run_token = getattr(presentation, "active_run_token", None)
+    if isinstance(active_run_token, str) and active_run_token.strip():
+        task_state = _get_task_runtime_state(active_run_token)
+        if task_state in _ACTIVE_TASK_STATES:
+            logger.info(
+                "Skip stale slides recovery because task is still recoverable: asset_id=%s task_id=%s task_state=%s",
+                getattr(asset, "id", "unknown"),
+                active_run_token,
+                task_state,
+            )
+            return None
 
     recovered_at = datetime.now(UTC).isoformat()
     stale_meta: dict[str, Any] = {

@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     dashscope_model_name: str = "qwen-max"
     dashscope_slides_analysis_model_name: str = "qwen3.6-plus"
     dashscope_slides_vision_model_name: str = "qwen3.6-plus"
+    dashscope_slides_scene_model_name: str = "qwen3.6-plus"
     dashscope_slides_html_model_name: str = "qwen3.6-plus"
     dashscope_slides_timeout_sec: int = 240
     dashscope_slides_planner_timeout_sec: int = 240
@@ -87,7 +88,7 @@ class Settings(BaseSettings):
     slides_html_batch_chunk_size: int = 4
     slides_html_rebuild_timeout_sec: int = 180
     slides_html_failed_only_max_ratio: float = 0.3
-    slides_processing_stale_timeout_sec: int = 1200
+    slides_processing_stale_timeout_sec: int = 1800
     slides_auto_upgrade_legacy_dsl_enabled: bool = True
     qa_context_max_hits: int = 2
     qa_context_chars_per_hit: int = 320

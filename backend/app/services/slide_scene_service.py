@@ -18,7 +18,7 @@ def _scene_budget_fields(page: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _default_scene_writer(page: dict[str, object]) -> dict[str, object]:
+def _default_scene_writer(page: dict[str, object], *, reason: str = "") -> dict[str, object]:
     narrative_goal = str(page.get("narrative_goal", "Paper Overview")).strip() or "Paper Overview"
     candidate_assets = page.get("candidate_assets")
     asset_bindings = []
@@ -40,6 +40,7 @@ def _default_scene_writer(page: dict[str, object]) -> dict[str, object]:
         **_scene_budget_fields(page),
         "_debug": {
             "scene_source": "fallback",
+            "reason": reason,
             "is_empty_scene": True,
             "content_blocks_count": 0,
             "citations_count": 0,
@@ -83,6 +84,18 @@ def _call_scene_generator(
         )
     except TypeError:
         return scene_generator(page, analysis_pack, visual_asset_catalog)
+
+
+def _call_scene_fallback_writer(
+    scene_writer: Callable[[dict[str, object]], dict[str, object]],
+    page: dict[str, object],
+    *,
+    reason: str,
+) -> dict[str, object]:
+    try:
+        return scene_writer(page, reason=reason)
+    except TypeError:
+        return scene_writer(page)
 
 
 def build_scene_specs(
@@ -142,8 +155,8 @@ def build_scene_specs(
                 **scene,
                 **_scene_budget_fields(page),
             }
-        except Exception:
-            return scene_writer(page)
+        except Exception as exc:
+            return _call_scene_fallback_writer(scene_writer, page, reason=str(exc))
 
     effective_parallelism = max(1, int(parallelism or 1))
     if effective_parallelism == 1 or len(pages) <= 1:

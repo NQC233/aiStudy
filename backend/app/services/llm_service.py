@@ -44,6 +44,7 @@ def get_slides_model_config(task_name: str) -> dict[str, str]:
     task_to_model = {
         "analysis": settings.dashscope_slides_analysis_model_name,
         "vision": settings.dashscope_slides_vision_model_name,
+        "scene": settings.dashscope_slides_scene_model_name,
         "html": settings.dashscope_slides_html_model_name,
         "image": settings.dashscope_image_model_name,
     }

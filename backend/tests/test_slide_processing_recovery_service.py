@@ -3,6 +3,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -58,7 +59,11 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
         )
         db = _FakeDb(asset, presentation)
 
-        snapshot = get_asset_slides_snapshot(db, "asset-1")
+        with patch(
+            "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
+            1200,
+        ):
+            snapshot = get_asset_slides_snapshot(db, "asset-1")
 
         self.assertEqual(snapshot.slides_status, "processing")
         self.assertTrue(snapshot.rebuilding)
@@ -67,7 +72,83 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
         self.assertEqual(presentation.status, "processing")
         self.assertEqual(db.commit_count, 0)
 
-    def test_get_asset_slides_snapshot_recovers_stale_processing_status(self) -> None:
+    def test_get_asset_slides_snapshot_does_not_recover_stale_processing_when_active_task_is_started(self) -> None:
+        stale_at = datetime.now(UTC) - timedelta(minutes=25)
+        asset = SimpleNamespace(id="asset-1", slides_status="processing", updated_at=stale_at)
+        presentation = SimpleNamespace(
+            asset_id="asset-1",
+            status="processing",
+            slides_dsl=None,
+            runtime_bundle={"page_count": 0, "pages": []},
+            tts_manifest={},
+            playback_plan={},
+            dsl_quality_report={},
+            dsl_fix_logs=[],
+            error_meta={},
+            active_run_token="task-123",
+            updated_at=stale_at,
+        )
+        db = _FakeDb(asset, presentation)
+
+        with (
+            patch(
+                "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
+                1200,
+            ),
+            patch(
+                "app.services.slide_processing_recovery_service._get_task_runtime_state",
+                return_value="STARTED",
+            ),
+        ):
+            snapshot = get_asset_slides_snapshot(db, "asset-1")
+
+        self.assertEqual(snapshot.slides_status, "processing")
+        self.assertTrue(snapshot.rebuilding)
+        self.assertEqual(snapshot.rebuild_reason, "runtime_bundle_rebuild")
+        self.assertEqual(asset.slides_status, "processing")
+        self.assertEqual(presentation.status, "processing")
+        self.assertEqual(presentation.active_run_token, "task-123")
+        self.assertEqual(db.commit_count, 0)
+
+    def test_get_asset_slides_snapshot_does_not_recover_stale_processing_when_active_task_is_success(self) -> None:
+        stale_at = datetime.now(UTC) - timedelta(minutes=25)
+        asset = SimpleNamespace(id="asset-1", slides_status="processing", updated_at=stale_at)
+        presentation = SimpleNamespace(
+            asset_id="asset-1",
+            status="processing",
+            slides_dsl=None,
+            runtime_bundle={"page_count": 0, "pages": []},
+            tts_manifest={},
+            playback_plan={},
+            dsl_quality_report={},
+            dsl_fix_logs=[],
+            error_meta={},
+            active_run_token="task-123",
+            updated_at=stale_at,
+        )
+        db = _FakeDb(asset, presentation)
+
+        with (
+            patch(
+                "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
+                1200,
+            ),
+            patch(
+                "app.services.slide_processing_recovery_service._get_task_runtime_state",
+                return_value="SUCCESS",
+            ),
+        ):
+            snapshot = get_asset_slides_snapshot(db, "asset-1")
+
+        self.assertEqual(snapshot.slides_status, "processing")
+        self.assertTrue(snapshot.rebuilding)
+        self.assertEqual(snapshot.rebuild_reason, "runtime_bundle_rebuild")
+        self.assertEqual(asset.slides_status, "processing")
+        self.assertEqual(presentation.status, "processing")
+        self.assertEqual(presentation.active_run_token, "task-123")
+        self.assertEqual(db.commit_count, 0)
+
+    def test_get_asset_slides_snapshot_recovers_stale_processing_status_without_active_task(self) -> None:
         stale_at = datetime.now(UTC) - timedelta(minutes=25)
         asset = SimpleNamespace(id="asset-1", slides_status="processing", updated_at=stale_at)
         presentation = SimpleNamespace(
@@ -85,7 +166,11 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
         )
         db = _FakeDb(asset, presentation)
 
-        snapshot = get_asset_slides_snapshot(db, "asset-1")
+        with patch(
+            "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
+            1200,
+        ):
+            snapshot = get_asset_slides_snapshot(db, "asset-1")
 
         self.assertEqual(snapshot.slides_status, "failed")
         self.assertEqual(snapshot.rebuild_reason, "stale_processing_recovered")
@@ -129,7 +214,11 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
         )
         db = _FakeDb(asset, presentation)
 
-        detail = get_asset_detail(db, "asset-1")
+        with patch(
+            "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
+            1200,
+        ):
+            detail = get_asset_detail(db, "asset-1")
 
         self.assertIsNotNone(detail)
         self.assertEqual(detail.enhanced_resources.slides_status, "failed")

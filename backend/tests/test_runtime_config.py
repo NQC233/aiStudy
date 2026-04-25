@@ -29,3 +29,8 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(settings.slides_html_batch_chunk_size, 4)
         self.assertEqual(settings.slides_html_rebuild_timeout_sec, 180)
         self.assertEqual(settings.slides_html_failed_only_max_ratio, 0.3)
+
+    def test_default_slides_processing_stale_timeout_is_extended(self) -> None:
+        settings = Settings(_env_file=None)
+
+        self.assertEqual(settings.slides_processing_stale_timeout_sec, 1800)

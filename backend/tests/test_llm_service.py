@@ -14,6 +14,7 @@ from app.services.llm_service import (
     generate_slide_html_page,
     generate_slide_scene_spec,
     generate_slides_presentation_plan,
+    get_slides_model_config,
 )
 from app.core.config import Settings
 
@@ -172,17 +173,46 @@ class LlmServiceTests(unittest.TestCase):
             Settings().dashscope_slides_html_timeout_sec,
         )
 
+
     def test_settings_use_dashscope_lowercase_model_names_for_slides(self) -> None:
-        settings = Settings()
+        settings = Settings(
+            dashscope_slides_analysis_model_name="qwen3.6-plus",
+            dashscope_slides_vision_model_name="qwen3.6-plus",
+            dashscope_slides_scene_model_name="qwen3.6-plus",
+            dashscope_slides_html_model_name="qwen3.6-plus",
+            dashscope_slides_timeout_sec=240,
+            dashscope_slides_planner_timeout_sec=240,
+            dashscope_slides_scene_timeout_sec=480,
+            dashscope_slides_html_timeout_sec=480,
+            dashscope_image_model_name="qwen-image-2.0-pro",
+        )
 
         self.assertEqual(settings.dashscope_slides_analysis_model_name, "qwen3.6-plus")
         self.assertEqual(settings.dashscope_slides_vision_model_name, "qwen3.6-plus")
+        self.assertEqual(settings.dashscope_slides_scene_model_name, "qwen3.6-plus")
         self.assertEqual(settings.dashscope_slides_html_model_name, "qwen3.6-plus")
         self.assertEqual(settings.dashscope_slides_timeout_sec, 240)
         self.assertEqual(settings.dashscope_slides_planner_timeout_sec, 240)
         self.assertEqual(settings.dashscope_slides_scene_timeout_sec, 480)
         self.assertEqual(settings.dashscope_slides_html_timeout_sec, 480)
         self.assertEqual(settings.dashscope_image_model_name, "qwen-image-2.0-pro")
+
+    def test_get_slides_model_config_uses_scene_specific_model_name(self) -> None:
+        from unittest.mock import patch
+
+        with patch(
+            "app.services.llm_service.settings",
+            Settings(
+                dashscope_api_key="test-key",
+                dashscope_base_url="https://example.com/v1",
+                dashscope_model_name="qwen-max",
+                dashscope_slides_analysis_model_name="qwen3.6-plus",
+                dashscope_slides_vision_model_name="qwen3.6-plus",
+                dashscope_slides_scene_model_name="qwen3.6-plus",
+                dashscope_slides_html_model_name="qwen3.6-plus",
+            ),
+        ):
+            self.assertEqual(get_slides_model_config("scene")["model_name"], "qwen3.6-plus")
 
     def test_extract_json_object_tolerates_invalid_backslash_sequences(self) -> None:
         raw = (

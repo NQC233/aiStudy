@@ -238,6 +238,22 @@ class SlideSceneServiceTestCase(unittest.TestCase):
         self.assertEqual(scenes[1]["_debug"]["scene_source"], "fallback")
         self.assertTrue(scenes[1]["_debug"]["is_empty_scene"])
 
+    def test_build_scene_specs_preserves_scene_failure_reason_in_fallback_debug(self) -> None:
+        presentation_plan = {
+            "page_count": 1,
+            "pages": [
+                {"page_id": "page-1", "scene_role": "method", "narrative_goal": "解释方法"},
+            ],
+        }
+
+        scenes = build_scene_specs(
+            presentation_plan,
+            scene_generator=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("scene llm timeout")),
+        )
+
+        self.assertEqual(scenes[0]["_debug"]["scene_source"], "fallback")
+        self.assertEqual(scenes[0]["_debug"].get("reason"), "scene llm timeout")
+
 
 if __name__ == "__main__":
     unittest.main()

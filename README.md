@@ -204,6 +204,7 @@ docker compose logs -f worker
   - `SLIDES_HTML_BATCH_CHUNK_SIZE`：chunked batch 的每批页数
   - `SLIDES_HTML_REBUILD_TIMEOUT_SEC`：page rebuild / failed-only rebuild 超时
   - `SLIDES_HTML_FAILED_ONLY_MAX_RATIO`：failed-only rebuild 允许的最大失败页占比，超过后应改走 full regeneration
+  - `SLIDES_PROCESSING_STALE_TIMEOUT_SEC`：Slides 生成 `processing` 状态的陈旧回收窗口；当前默认 1800 秒，用于覆盖 10-20 分钟 full rebuild 的长尾执行时间
 - `KB_CHUNK_TARGET_CHARS` / `KB_CHUNK_MAX_CHARS`：chunk 粒度控制
 
 ### 9.5 变更规则
@@ -231,6 +232,7 @@ docker compose logs -f worker
 
 - `DASHSCOPE_SLIDES_ANALYSIS_MODEL_NAME`
 - `DASHSCOPE_SLIDES_VISION_MODEL_NAME`
+- `DASHSCOPE_SLIDES_SCENE_MODEL_NAME`
 - `DASHSCOPE_SLIDES_HTML_MODEL_NAME`
 - `DASHSCOPE_IMAGE_MODEL_NAME`
 
