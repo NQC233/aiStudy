@@ -29,7 +29,8 @@
 - [x] 代码注释默认使用中文
 - [x] Agent 治理以仓库根目录 `AGENTS.md` 为最高项目约束，优先于外部技能模板
 - [x] `docs/specs/` 为唯一权威 Spec 目录，`docs/superpowers/` 仅作参考/草稿
-- [x] Slides 重建支持陈旧 `processing` 状态自动回收再入队，避免历史卡死导致不可重试
+- [x] Slides runtime rebuild 已切到 Celery 入队执行；读取侧仍保留陈旧 `processing` 自动回收，避免历史任务卡死后不可重试
+- [x] Slides 快照语义已对齐：`presentation.active_run_token + processing` 会翻译为显式 `rebuilding=true`，前端不再只靠 `slides_status==='processing'` 猜测后台任务态
 - [x] lesson_plan 成功后保持 `slides_status=processing`，仅在 DSL 任务完成后置 `ready`，避免“伪 ready”
 - [x] Spec 12 规划已落地到 `docs/specs/spec-12-tts-and-auto-paging.md`，后续按该 Spec 实施
 - [x] Spec 11C 实际交付为自研分页渲染（非 Reveal.js runtime），文档口径已修正
@@ -57,7 +58,9 @@
 - [x] Slides 新主线模型栈已确定：`Qwen3.6-Plus` 负责文本分析/视觉理解/HTML 生成，`Qwen-Image-2.0` 作为文生图补位模型
 - [x] Spec 15.1 首轮运行时已改写为纯 HTML/CSS deck runtime，不再以 Reveal.js 为首轮依赖
 - [x] Spec 15 调试观测已补齐 Level 2/3 内层来源标记：现可区分 plan 内层 fallback 与 scene 空壳成功，避免外层 `success` 掩盖真实退化路径
-- [x] Spec 15 已接入 Level 3/4 按页并行执行入口与 deck 级统一风格约束透传：scene/html 现支持配置化并发度、按页失败隔离、按页保序输出
+- [x] Spec 15.2 已完成后端 ready/playback 门禁统一、page-level validation 接线、runtime bundle 快照汇总、前端播放页按页重建 / failed-only 入口与对应 E2E
+- [x] Slides 播放页已支持基于现有 HTML runtime 的 Fullscreen API 全屏预览，不再引入第二套渲染系统
+- [x] 项目环境变量治理口径已明确：`/.env.example` 为唯一模板、`/.env` 为唯一实际本地值、backend/worker 统一走 `Settings`、frontend 仅允许读取 `VITE_*`
 
 ## 3. 当前待确认事项
 
@@ -94,8 +97,277 @@
 
 - [x] Spec 12：TTS 与自动翻页（核心链路已完成，后续演示内容与播放体验增强迁移至 Spec 15）
 - [x] Spec 12D：RAG 评测协议与优化闭环（已锁定 S0(single-turn)、完成 P95 收敛并通过最终回归门禁）
-- [ ] Spec 15：Paper-to-Slides 主生成系统重构（进行中：权威 Spec 已重写，待进入实现）
-- [ ] Spec 15.1：Slides HTML Runtime 与播放壳重构（进行中：权威 Spec 已重写，待进入实现）
+- [ ] Spec 15：Paper-to-Slides 主生成系统重构（进行中：analysis/planning/scene/HTML 主链路、并行执行与 artifacts 持久化已落地，继续收敛 runtime 质量）
+- [ ] Spec 15.1：Slides HTML Runtime 与播放壳重构（进行中：HTML runtime、播放页强 gate、workspace 门禁与 fullscreen 已落地）
+- [ ] Spec 15.2：Slides Runtime 修复与调试成本治理（进行中：validation 生产链路、固定画布 prompt、failed-only/page rebuild UI、环境变量治理规范、batch 首轮生成与真实资产问题分析 handoff 已落地；待补浏览器实测级 gate、batch prompt 质量修复与 iframe 缩放修复）
+
+### Spec 15.2 本轮追加记录
+
+- 完成内容：
+  - 新增 `backend/app/services/slide_processing_recovery_service.py`，基于 `slides_processing_stale_timeout_sec` 回收陈旧 slides `processing` 状态
+  - `get_asset_slides_snapshot()` 与 `get_asset_detail()` 现会在读取时自动识别僵尸 slides 任务，并将 `asset.slides_status` / `presentation.status` 从 `processing` 降级为 `failed`
+  - 回收时会清空 `presentation.active_run_token` 并写入 `presentation.error_meta.stale_processing_recovery`，便于前端与后续排障识别这次恢复来源
+  - 新增回归测试 `backend/tests/test_slide_processing_recovery_service.py`，覆盖 slides 快照与工作区详情两个恢复入口
+- 验证结果：
+  - `python -m unittest backend.tests.test_slide_processing_recovery_service backend.tests.test_slide_runtime_snapshot_service` 通过（8 tests, OK）
+- 当前已知缺口：
+  - Slides 主生成/重建仍未改成真正 Celery 异步任务；本轮只解决僵尸 `processing` 的自动回收，不解决真实后台执行与进度追踪错位问题
+  - `test_slide_generation_v2_service` 全量套件在当前工作区未完成收敛，本轮未将其作为通过门禁
+- 下一轮建议：
+  - 继续把 slides rebuild / full generation 改成真正 Celery task，并让前端 `rebuilding` / `rebuild_reason` 与真实任务状态对齐
+- 建议提交信息：
+  - `fix: recover stale slides processing state on read`
+
+### Spec 15.2 本轮追加记录（Slides Celery Async）
+
+- 完成内容：
+  - 新增 `enqueue_asset_slides_runtime_bundle_rebuild(...)`，用于在 API 入队前完成 slides rebuild 参数校验、陈旧 `processing` 回收、防重复入队以及 `processing` 状态落库
+  - `POST /api/assets/{asset_id}/slides/runtime-bundle/rebuild` 已从同步执行改为 Celery 入队，并把返回的 task id 回写到 `presentation.active_run_token`
+  - `backend/app/workers/tasks.py` 已新增 `enqueue_generate_asset_slides_runtime_bundle`，复用现有 `generate_asset_slides_runtime_bundle(...)` 作为唯一业务执行入口
+  - 新增 worker 失败回写：若 slides Celery 任务抛异常，会把 `asset.slides_status` / `presentation.status` 置为 `failed`，清空 `active_run_token`，并写入 `presentation.error_meta.worker_failure`
+  - 新增回归测试 `backend/tests/test_slide_async_rebuild.py`，覆盖 rebuild 入队、防重复入队、route 触发 Celery、worker 失败回写
+- 验证结果：
+  - `python -m unittest backend.tests.test_slide_async_rebuild backend.tests.test_slide_processing_recovery_service backend.tests.test_slide_runtime_snapshot_service` 通过（12 tests, OK）
+- 当前已知缺口：
+  - 前端仍主要依赖 `slides_status === 'processing'` 与本地 `rebuildingSlides` 控制按钮/轮询，尚未完全利用 `active_run_token` 或新的后台任务语义
+  - 当前只把 slides rebuild 切到 Celery；若后续还存在其他直连 slides 主生成入口，仍需统一到同一异步模式
+  - 还未补 worker 成功完成后的显式清理断言测试；当前依赖 `generate_asset_slides_runtime_bundle(...)` 自身完成最终状态回写
+- 下一轮建议：
+  - 继续把前端 `rebuilding` / `rebuild_reason` 与真实 Celery task 状态对齐，避免播放页只靠 `slides_status` 推断后台任务态
+  - 视需要把其他 slides 生成入口统一改到同一 Celery task
+- 建议提交信息：
+  - `feat: enqueue slides runtime rebuild with celery`
+
+### Spec 15.2 本轮追加记录（Rebuilding 语义对齐）
+
+- 完成内容：
+  - `backend/app/services/slide_dsl_service.py` 现会将 `presentation.active_run_token + asset/presentation.status=processing` 翻译为 `AssetSlidesResponse.rebuilding=true`
+  - 活跃 Celery slides rebuild 任务现在会返回显式 `rebuild_reason="runtime_bundle_rebuild"`；失败态或已结束任务不再错误地暴露为 `rebuilding`
+  - `frontend/src/pages/workspace/WorkspacePage.vue` 已改为优先依据 `slidesSnapshot.rebuilding` 控制 slides 轮询提示与重建按钮禁用，而不是单纯依赖 `slides_status==='processing'`
+  - `frontend/src/pages/slides/SlidesPlayPage.vue` 已改为优先依据 `slidesResponse.rebuilding` 控制 rebuild 自动轮询与“后台重建中”提示文案
+  - `backend/tests/test_slide_runtime_snapshot_service.py` 已新增回归用例，覆盖 active run token -> rebuilding 语义与 failed run 非 rebuilding 语义
+- 验证结果：
+  - `python -m unittest backend.tests.test_slide_async_rebuild backend.tests.test_slide_processing_recovery_service backend.tests.test_slide_runtime_snapshot_service` 通过（14 tests, OK）
+- 当前已知缺口：
+  - 这轮未补前端 E2E 回归；当前语义调整主要由后端单测与现有页面逻辑静态校验覆盖
+  - `rebuild_reason` 目前只区分 `runtime_bundle_rebuild` 与既有 `schema_upgrade_rebuild`，尚未细分更多后台任务原因
+- 下一轮建议：
+  - 补一条前端 E2E，验证 rebuild 提交后页面因 `rebuilding=true` 自动轮询，并在任务完成后恢复 ready
+  - 视需要补更细的 task reason/phase 显示，例如 `scene_rebuild` / `html_rebuild` / `failed_only_rebuild`
+- 建议提交信息：
+  - `fix: align slides rebuilding semantics with celery state`
+
+### Spec 15.2 待做补充（重建策略）
+
+- [ ] 明确工作区主按钮的重建策略语义：当前默认是 slides `from_stage="full"` rebuild，后续需要改为以下之一：
+  - [ ] 智能重建：根据已存在的 `analysis_pack` / `presentation_plan` / `scene_specs` / `rendered_slide_pages` 自动选择最佳起始阶段
+  - [ ] 用户显式选择：提供“全盘重建”与“智能重建”入口，避免把 full rebuild 与增量续建混为一谈
+- [ ] 若采用智能重建，需把阶段判定规则写清楚并落到前后端同一套语义里
+- [ ] 若采用用户显式选择，默认推荐 `智能重建`，同时保留 `全盘重建` 作为强制回退选项
+
+### Spec 15.2 本轮追加记录（Slides 长任务超时修正）
+
+- 完成内容：
+  - 将 `backend/app/core/config.py` 中 `slides_processing_stale_timeout_sec` 默认值从 `300` 提高到 `1200`
+  - 在 `/.env.example` 中显式增加 `SLIDES_PROCESSING_STALE_TIMEOUT_SEC=1200`，并注明当前 3 并行 slides full rebuild 通常需要 10-20 分钟
+  - 新增回归测试，确保运行 10 分钟的 slides rebuild 不会被误判为 stale processing
+- 验证结果：
+  - 待运行本轮目标测试并确认通过
+- 当前已知缺口：
+  - 本轮只修正超时窗口，尚未实现“有 active Celery task 时先查任务活跃态，再决定是否 stale 回收”
+  - 运行中的容器若未同步更新 `/.env`，仍会继续使用旧值
+- 下一轮建议：
+  - 继续把 stale recovery 从“纯时间阈值”升级为“时间阈值 + Celery 任务活跃态判断”
+- 建议提交信息：
+  - `fix: extend slides stale timeout for long rebuilds`
+  - 本次 `partial_ready` 实地验收依赖可逆本地验收夹具，而非自然生成的真实 mixed bundle 资产
+  - 浏览器测量级 HTML validation gate 仍未落地，当前 failed page 仍来自现有 runtime gate / validation summary 语义
+
+### Spec 15.2 本轮追加记录（Slides stale recovery 与 Celery 任务态守卫）
+
+- 完成内容：
+  - `backend/app/services/slide_processing_recovery_service.py` 已新增对 `presentation.active_run_token` 的 Celery 状态探测；当任务状态仍为 `PENDING/RECEIVED/STARTED/RETRY`，或结果后端已返回 `SUCCESS` 时，不再把 slides `processing` 误回收到 `failed`
+  - stale recovery 仍保留时间阈值兜底，但仅在无活跃 task token 或 Celery 状态不可继续恢复时才执行 `failed` 回收，避免真实长任务与读取侧回收发生竞态
+  - `backend/app/core/config.py`、`/.env.example`、`README.md` 已同步将 `SLIDES_PROCESSING_STALE_TIMEOUT_SEC` 默认值提升到 `1800`，覆盖当前 10-20 分钟 full rebuild 的长尾执行窗口
+  - `backend/tests/test_slide_processing_recovery_service.py` 已新增回归测试，锁定“active task=STARTED/SUCCESS 时不得误回收为 failed”；`backend/tests/test_runtime_config.py` 已新增默认 stale timeout 配置断言
+- 验证结果：
+  - `python -m unittest backend.tests.test_slide_processing_recovery_service backend.tests.test_slide_runtime_snapshot_service backend.tests.test_runtime_config` 通过（16 tests, OK）
+- 当前已知缺口：
+  - 本轮只修正读取侧 stale recovery 与 Celery 状态竞态，尚未处理“worker 成功写回晚于前端读取”时前端继续展示旧 runtime bundle 的体验问题
+  - `SUCCESS` 结果当前只用于阻止误回收，尚未在读取侧进一步主动拉平 DB 最终状态；最终 ready/failed 仍以业务服务写库结果为权威
+  - “加快执行速度”仍未进入本轮实现，后续需单列为 batch/chunk/并发策略优化议题
+- 下一轮建议：
+  - 优先继续处理“failed 但仍可进入旧 slides”的前后端语义收敛，明确旧 runtime bundle 与最新 rebuild 状态的展示边界
+  - 再单独推进提速优化：记录 batch/chunk 耗时分布，评估并发度、chunk size、prompt 体积与模型选择的组合收益
+- 建议提交信息：
+  - `fix: guard stale slides recovery with celery task state`
+
+### Spec 15.2 本轮追加记录（Deck-Aware Batch HTML 首轮生成）
+
+
+- 完成内容：
+  - 首轮 full generation 的 HTML 主路径已从逐页 fan-out 切到 deck-aware batch generation
+  - `runtime_bundle` 现可持久化 `deck_meta` 与 batch generation meta，供 failed-only / single-page rebuild 复用
+  - page-level validation / failed-only rebuild payload 契约保持不变
+  - failed-only rebuild 增加失败页占比阈值，超过阈值时要求重新 full generation
+- 验证结果：
+  - `cd backend && python -m unittest tests.test_runtime_config tests.test_llm_service tests.test_slide_html_authoring_service tests.test_slide_generation_v2_service -v` 通过（68 tests, OK）
+  - `cd backend && python -m unittest tests.test_slide_generation_v2_service -v` 通过（36 tests, OK）
+- 当前已知缺口：
+  - batch prompt 仍需继续基于真实资产调优统一性与 token 体积
+  - chunked batch 的 style drift 仍需观察
+- 下一轮建议：
+  - 用真实 8-12 页资产记录 batch vs 旧 per-page 的耗时与一致性对比
+- 建议提交信息：
+  - `feat: switch initial slide html generation to deck-aware batch mode`
+
+### Spec 15.2 本轮追加记录（Batch 质量问题分析与修复交接）
+
+- 完成内容：
+  - 已基于本地数据库对当前 batch 重构资产 `a38f4892-a4c5-44c6-b380-168c18a5961b` 与历史旧策略资产 `2c233c24-168f-41a0-84e0-e527484b6123`、`d9ae48b3-7d9a-4606-a8e9-fa11e6e9b645` 做对比分析
+  - 已确认当前 batch 资产虽然 `deck_meta` 声明 `16:9 / 1600x900`，但前端实际仍出现滚动条，说明问题不只在后端元数据，而在 iframe 缩放与页面根画布契约
+  - 已确认当前 batch 资产存在图表 placeholder 与公式/Markdown 字面量泄漏；数据库中的 `visual_asset_catalog` 与 scene `asset_bindings` 仍在，说明退化发生在 HTML authoring 层，而非 scene 缺资产
+  - 已将分析结论与下一轮修复优先级写入 `docs/specs/spec-15.2-slides-runtime-hardening-and-cost-control.md`，作为权威 handoff
+- 验证结果：
+  - 本轮以数据库证据与代码对读为主，未新增重构执行；当前已确认资产 `a38f4892-a4c5-44c6-b380-168c18a5961b` 快照为 `ready / batch / page_count=10 / playable_page_count=10`
+- 当前已知缺口：
+  - batch prompt 仍弱于单页 prompt：尚未显式锁定 `html/body/根容器` 固定画布、真实资产渲染与 Markdown/公式最终落地契约
+  - `frontend/src/components/slides/HtmlSlideFrame.vue` 仍未提供 iframe 内部固定像素画布的缩放策略
+  - 当前工作区全量 Python 回归并非全绿，后续改动 `llm_service.py` / `slide_generation_v2_service.py` 前需先确认已有失败项的影响范围
+- 下一轮建议：
+  - 先增强 batch prompt 与对应单测，再修 iframe 缩放；完成后仅对 `a38f4892-a4c5-44c6-b380-168c18a5961b` 做最小闭环重构验证
+  - 在 batch prompt 与前端缩放修复完成前，不要重构其他历史资产
+- 建议提交信息：
+  - `docs: add spec15.2 batch quality handoff`
+
+### Spec 15.2 本轮追加记录（Batch Prompt 契约收紧与 iframe 固定画布缩放）
+
+- 完成内容：
+  - 已收紧 `backend/app/services/llm_service.py` 中 `generate_slide_html_bundle(...)` 的 batch prompt，使其补齐固定 `1600x900` 单页画布、`html/body/根画布容器` 显式固定尺寸与 `overflow:hidden`、禁止内部滚动、安全区与禁止长文档布局等契约
+  - 已补齐 batch prompt 的内容落地要求：存在 `asset_bindings` 时优先输出真实 `<img>/<svg>/<table>` 等最终 DOM；禁止输出 placeholder；Markdown / 公式必须直接落成最终 HTML
+  - 已在 `backend/tests/test_llm_service.py` 新增 2 条回归测试，锁定上述 batch prompt 契约
+  - 已修改 `frontend/src/components/slides/HtmlSlideFrame.vue`，在 iframe 内部增加固定 `1600x900` 画布容器并按视口做等比缩放，避免仅有 16:9 外框而内部画布未缩放
+  - 本轮未重构其他历史资产，仍保持“后续只对 `a38f4892-a4c5-44c6-b380-168c18a5961b` 做最小闭环验证”的边界
+- 验证结果：
+  - `cd backend && python -m unittest tests.test_llm_service.LlmServiceTests.test_generate_slide_html_bundle_prompt_requires_fixed_canvas_contract tests.test_llm_service.LlmServiceTests.test_generate_slide_html_bundle_prompt_requires_real_asset_rendering_and_final_html tests.test_llm_service.LlmServiceTests.test_generate_slide_html_bundle_prompt_requires_page_level_html_css_render_meta tests.test_llm_service.LlmServiceTests.test_generate_slide_html_bundle_rejects_pages_without_html_css_shape -v` 通过（4 tests, OK）
+  - `cd backend && python -m unittest tests.test_llm_service -v` 通过（19 tests, OK）
+  - `cd frontend && npm run build` 通过
+- 当前已知缺口：
+  - 本轮未完成真实浏览器播放页验收：本地前端 dev server 可启动，但本地后端在应用启动阶段因 `postgres` 主机名无法解析而失败，暂未能进入真实播放页验证滚动条是否完全消失
+  - 也尚未对 `a38f4892-a4c5-44c6-b380-168c18a5961b` 重新执行一次最小闭环 rebuild 来验证模型是否按新 batch prompt 产出真实图表/公式 HTML
+- 下一轮建议：
+  - 先修正本地后端连接到可访问 PostgreSQL 的运行环境，再补真实浏览器播放页验收
+  - 环境恢复后，只对 `a38f4892-a4c5-44c6-b380-168c18a5961b` 做最小闭环 rebuild，验证无滚动、无 placeholder、无公式源码泄漏
+- 建议提交信息：
+  - `fix: tighten batch slide html contract and scale fixed canvas iframe`
+
+### Spec 15.2 本轮追加记录（Validator 放宽支持 HTML inline 固定画布契约）
+
+- 完成内容：
+  - 已定位 ResNet 资产 `2c233c24-168f-41a0-84e0-e527484b6123` rebuild 失败的直接原因：batch HTML 产物把 `1600x900 + overflow:hidden` 主要写在 HTML inline style 中，而 `validate_rendered_slide_page(...)` 之前只检查 CSS 文本，导致全部页面被误判为 `canvas_contract_missing`
+  - 已放宽 `backend/app/services/slide_html_authoring_service.py` 中的固定画布 validator：当 CSS 未命中时，会额外检查 HTML inline style 中是否显式满足固定 `1600x900` 画布与 `overflow:hidden` 契约
+  - 同时收紧了同文件中的明显溢出检测，避免把合法的 `overflow:hidden` 误判成 `overflow_detected`
+  - 已在 `backend/tests/test_slide_html_authoring_service.py` 新增回归测试，锁定“CSS 不含固定画布，但 HTML inline style 已满足固定画布契约”时应判定通过
+- 验证结果：
+  - `python -m unittest backend.tests.test_slide_html_authoring_service.SlideHtmlAuthoringServiceTestCase.test_validate_rendered_slide_page_passes_with_fixed_canvas_contract_in_html_inline_styles -v` 通过（1 test, OK）
+  - `python -m unittest backend.tests.test_slide_html_authoring_service -v` 通过（15 tests, OK）
+- 当前已知缺口：
+  - 本轮只放宽了 validator 口径，尚未重新触发 `2c233c24-168f-41a0-84e0-e527484b6123` 的 rebuild 验证这次修复是否足以让该资产从 `failed/not_ready` 收敛为可播放状态
+  - scene_generation 仍显示 12 页全部 fallback，说明即使 runtime gate 不再误判，后续仍需继续确认 scene 退化是否影响图表/公式最终质量
+- 下一轮建议：
+  - 先仅对 `2c233c24-168f-41a0-84e0-e527484b6123` 重新做一次最小 rebuild，确认 runtime gate 不再因 inline fixed canvas 被误判
+  - 若 rebuild 后仍出现质量问题，再继续追 scene fallback 为何全量发生
+- 建议提交信息：
+  - `fix: accept fixed canvas contract from inline slide html`
+
+### Spec 15.2 本轮追加记录（ResNet 资产重建复核与阶段收尾判断）
+
+- 完成内容：
+  - 已在重启 backend/worker 后重新对资产 `2c233c24-168f-41a0-84e0-e527484b6123` 执行 rebuild，并基于数据库产物完成复核
+  - 当前该资产已从此前的 `failed/not_ready` 收敛为 `slides_status=ready`、`presentation.status=ready`、`playback_status=ready`、`playable_page_count=10`
+  - 数据库抽检显示：本轮产物未再出现 placeholder 文本，也未检出明显 Markdown / 公式源码泄漏；10 页中有 8 页产出 `<svg>`，说明 batch HTML 至少已能落成真实图形 DOM，而非退回占位字符串
+  - 同时也确认当前质量上限仍然明显：`scene_generation` 仍是 10/10 fallback，`scene_specs` 每页 `content_blocks_count=0`，`rendered_slide_pages.asset_refs=0`，说明当前播放结果更多依赖 HTML authoring 阶段的模型自生成，而不是稳定复用 scene 层结构化内容与资产引用
+- 验证结果：
+  - `SELECT ... slides_status/presentation_status/playback_status/playable_page_count ...` 返回 `ready / ready / ready / 10`
+  - `SELECT ... placeholder_pages/img_pages/svg_pages/table_pages ...` 返回 `0 / 0 / 8 / 0`
+  - `SELECT ... visual_asset_count ...` 返回 `22`
+  - `SELECT ... scene asset_binding_count/content_block_count ...` 显示 10 页均有 `asset_binding_count=1` 但 `content_block_count=0`
+  - `SELECT ... rendered asset_ref_count ...` 显示 10 页均为 `asset_ref_count=0`
+- 当前判断：
+  - 本轮已没有明确的 runtime gate / fixed canvas / placeholder / markdown 泄漏类工程性阻塞，链路可认为已恢复到“可播放、可交付调优”的状态
+  - 剩余“效果勉强”的主要问题更像模型质量上限与 scene→html 语义退化，而不是当前阶段必须继续硬修的确定性工程故障
+- 下一轮建议：
+  - 若继续深挖，应转入质量优化议题：优先排查 scene page-isolation 为什么持续全量 fallback，以及如何让 asset_refs / scene content blocks 真正进入最终 HTML
+  - 若当前目标是阶段收尾，可以将本阶段结论定为“工程链路已打通，剩余观感问题主要属于模型生成质量”
+- 建议提交信息：
+  - `docs: record resnet rebuild verification and stage closure assessment`
+
+### Spec 15.2 本轮追加记录（Scene fallback 可观测性与 scene 模型配置修正）
+
+- 完成内容：
+  - 已修复 `backend/app/services/slide_scene_service.py` 中 scene fallback 吞异常后不保留原始报错的问题：`build_scene_specs()` 现在在 page-level scene 失败时会把真实异常文本写入 fallback scene 的 `_debug.reason`
+  - 因此 `slide_generation_v2_service.py` 现可通过既有 `_extract_scene_debug(...)` / `error_meta.scene_generation[*].reason` 读到真实 scene fallback 原因，不再只剩空字符串
+  - 已新增回归测试 `backend/tests/test_slide_scene_service.py`，锁定“scene fallback 必须保留原始异常 reason”
+  - 已进一步确认并修复一个更深层直接原因：`backend/app/services/llm_service.py` 的 `get_slides_model_config("scene")` 之前没有映射 `scene`，实际会回退到通用 `DASHSCOPE_MODEL_NAME`
+  - 现已在 `backend/app/core/config.py`、`/.env.example`、`README.md` 中新增并接通 `DASHSCOPE_SLIDES_SCENE_MODEL_NAME`，使 scene 层与 analysis / html 一样走 Slides 专用模型配置
+  - 已新增回归测试 `backend/tests/test_llm_service.py`，锁定 scene 任务必须使用 `DASHSCOPE_SLIDES_SCENE_MODEL_NAME`
+- 验证结果：
+  - `python -m unittest backend.tests.test_slide_scene_service backend.tests.test_llm_service backend.tests.test_slide_generation_v2_service.SlideGenerationV2ServiceTests.test_generate_asset_slides_runtime_bundle_records_scene_and_html_fallbacks_in_error_meta backend.tests.test_slide_generation_v2_service.SlideGenerationV2ServiceTests.test_generate_asset_slides_runtime_bundle_surfaces_empty_scene_diagnostics -v` 通过（29 tests, OK）
+- 当前已知缺口：
+  - 本轮补齐的是“为什么看不到真实 scene 错误”与“scene 实际模型配置错配”两类工程问题，还未重新对真实资产触发一次 scene rebuild 来观察最新 `error_meta.scene_generation[*].reason`
+  - batch HTML 仍未显式接入 `visual_asset_catalog`，batch 返回页也仍未统一回填 `asset_refs`；即使 scene 不再全量 fallback，资产语义落地链路仍未完全闭环
+- 下一轮建议：
+  - 先对已有问题资产执行一次最小 scene/full rebuild，读取最新 `error_meta.scene_generation[*].reason`，确认真实失败类型是超时、响应非 JSON、内容校验失败还是别的模型返回问题
+  - 再根据真实 scene 错误类型决定是调 scene prompt / timeout / 模型，还是继续补 scene->html 资产语义传递
+- 建议提交信息：
+  - `fix: surface scene fallback reasons and use dedicated scene model config`
+
+
+- 完成内容：
+  - 已沿着 `plan -> scene -> html` 调用链补做代码与数据库排查，解释为什么当前结果里没有真正用到 scene 层视觉资产，以及为什么 `scene_generation` 仍然是 `10/10 fallback`
+  - 已确认 `scene_generation` 的直接机制不是“scene 阶段显式返回了 fallback 错误对象”，而是 `backend/app/services/slide_scene_service.py` 中 `build_scene_specs()` 的 `build_one()` 在调用 `generate_slide_scene_spec(...)` 时会吞掉任意异常并直接返回 `_default_scene_writer` 结果；因此上游只看到 fallback scene，看不到原始异常文本
+  - 已确认这就是为什么当前 `error_meta.scene_generation[*].reason` 全为空字符串：异常在 `slide_scene_service.py` 内被吞掉后，`backend/app/services/slide_generation_v2_service.py` 只能从 fallback scene 的 `_debug` 里读到 `scene_source=fallback`，但读不到真实报错
+  - 已确认 scene fallback 后的 `scene_spec` 只保留最薄的一层信息：`title/summary_line` 直接复用 `narrative_goal`，`content_blocks=[]`，`citations=[]`，`asset_bindings` 仅从 `candidate_assets` 中取首个 `asset_id`；也就是说 scene 层并没有真正把视觉资产理解结果和结构化内容落成可供 HTML 稳定消费的语义稿
+  - 已进一步确认 batch HTML 主路径本身也没有接收 `visual_asset_catalog`：`generate_slide_html_bundle(...)` 的 payload 只有 `scene_specs/deck_style_guide/deck_digest/deck_meta`，没有视觉资产目录；因此一旦 scene 层 fallback 成只含 `asset_id` 的薄壳，HTML 阶段就拿不到资产描述与复用语义，只能依赖模型自由发挥生成通用 `<svg>`
+  - 已确认 batch HTML 渲染路径还会丢失 `asset_refs`：逐页渲染 `render_slide_page(...)` 会把 `scene_spec.asset_bindings` 映射为 `rendered_page.asset_refs`，但 batch 路径 `render_slide_pages_batch()` 直接接受 LLM bundle 返回页，不会把 `scene_specs` 中的 `asset_bindings` 回填到 bundle pages；这与数据库中“scene 有 `asset_bindings_count=1`，rendered pages 却全部 `asset_ref_count=0`”一致
+- 验证结果：
+  - 代码证据：`backend/app/services/slide_scene_service.py` 中 `build_one()` 捕获 `Exception` 后直接 `return scene_writer(page)`；`_default_scene_writer()` 不保留原始异常 reason
+  - 代码证据：`backend/app/services/llm_service.py` 中 `generate_slide_html_bundle(...)` 的 `user_payload` 不包含 `visual_asset_catalog`
+  - 代码证据：`backend/app/services/slide_html_authoring_service.py` 中逐页 `render_slide_page(...)` 会写入 `asset_refs=scene_spec.asset_bindings`，但 batch `render_slide_pages_batch()` 只校验 `page_id/html/css/render_meta` 并直接返回 bundle pages，不会回填 `asset_refs`
+  - 数据库证据：`visual_asset_catalog=22`、10 页 `scene asset_binding_count=1`、10 页 `rendered asset_ref_count=0`、`scene_generation=10/10 fallback`
+- 当前判断：
+  - “没有真正用到 scene 层视觉资产”主要不是单点模型笨，而是两层问题叠加：scene 阶段异常被吞掉后退化为薄壳 scene；随后 batch HTML 阶段既拿不到 `visual_asset_catalog`，也没有把 scene `asset_bindings` 显式回填为 `asset_refs`
+  - “scene_generation 仍然 10/10 fallback” 的已确认表层根因是异常被 `build_scene_specs()` 吞掉；更深一层的原始异常类型当前不可见，最可能落在 scene LLM 调用/JSON 解析/响应格式不满足上，但现有日志与 `error_meta` 无法直接证明是哪一种
+- 下一轮建议：
+  - 若未来继续优化，第一优先级不是继续猜 prompt，而是先让 scene fallback 保留真实异常原因（至少写入 `_debug.reason` / `error_meta.scene_generation.reason`），否则后续排查会一直盲飞
+  - 第二优先级是决定 batch HTML 是否应显式接收 `visual_asset_catalog`，以及是否在 batch 返回页后统一把 scene `asset_bindings` 回填到 `asset_refs`
+  - 第三优先级才是基于真实 scene 错误类型调 scene prompt / model
+- 建议提交信息：
+  - `docs: record scene fallback and visual asset grounding analysis`
+
+### Spec 15.2 本轮追加记录（ResNet 数据库复核与阶段正式收尾）
+
+- 完成内容：
+  - 已在用户重启 `backend/worker` 但**未手动点击 rebuild** 的前提下，对资产 `2c233c24-168f-41a0-84e0-e527484b6123` 做数据库与日志复核
+  - 已确认当前 presentation 的 `updated_at` 仍为 `2026-04-25 09:04:09+00`，而本次容器重启约发生在 `09:54+00`；最近 15 分钟 worker 日志仅包含 warm shutdown 与 worker ready，不存在新的 slides task 执行记录
+  - 结论是：用户重启后看到的当前演示文稿并不是本轮修复后自动新生成的结果，而是此前已成功落库的 deck
+  - 已进一步确认当前产物不是 scene fallback：`error_meta.scene_generation` 10 页均为 `status=success`、`scene_source=generated`、`is_empty_scene=false`
+  - 已进一步确认当前 HTML 并非完全脱离 scene 自由生成：`rendered_slide_pages` 中多页已带 `asset_refs`（例如第 2/3/7 页分别为 `1/2/3`），说明 scene/asset 绑定已进入最终渲染产物
+  - 当前 10 页 `validation_status` 与 `runtime_gate_status` 均为 `passed/ready`，整体已达到可播放、可验收状态
+- 验证结果：
+  - `docker compose logs --since=15m worker` 未见新的 slides rebuild 执行记录
+  - `SELECT ... FROM presentations ... ORDER BY updated_at DESC` 显示 ResNet deck 最新更新时间仍早于本次重启
+  - `SELECT ... error_meta->'scene_generation' ...` 显示 10/10 页面为 `generated`，不是 fallback
+  - `SELECT ... rendered_slide_pages ...` 显示当前 deck 已存在 page-level `asset_refs`，且 10 页 runtime gate 全部为 `ready`
+- 当前判断：
+  - 当前阶段的主要工程目标已达成：Slides 链路能够稳定产出可播放 deck，scene 已恢复为真实生成路径，stale recovery 与 Celery 状态竞态也已完成修正
+  - 用户肉眼观察到的“局部内容重叠/布局仍可优化”判断与数据库抽样相符：部分页面 HTML 密度较高、绝对定位较多，当前更像观感质量优化项，而非阻塞本阶段收尾的确定性工程故障
+  - 模型能力对结果质量影响显著；结合本轮真实资产复核，可以接受“`qwen3.6-plus` 显著优于 `qwen-plus`”作为当前阶段的经验结论
+- 后续建议：
+  - 正式结束 Spec 15.2 当前阶段，后续若继续推进，建议切换到质量优化主题：浏览器实测级 overlap/overflow gate、页面布局密度收敛、以及模型/提示词带来的观感提升
+  - 若无新的阻塞问题，不再继续把当前“局部重叠”视为本阶段必须修完的故障
+- 建议提交信息：
+  - `docs: close spec15.2 after resnet database verification`
 
 ### 待开始
 
@@ -126,9 +398,10 @@
 16. Spec 12：TTS 与自动翻页
 17. Spec 15：Paper-to-Slides 主生成系统重构（analysis + planning + scene + HTML page）
 18. Spec 15.1：Slides HTML Runtime 与播放壳重构
-19. Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay）
-20. Spec 13：Anki CSV 导出
-21. Spec 14：课后习题
+19. Spec 15.2：Slides Runtime 修复与调试成本治理
+20. Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay）
+21. Spec 13：Anki CSV 导出
+22. Spec 14：课后习题
 
 ## 6. 每轮开发完成后必须更新的内容
 

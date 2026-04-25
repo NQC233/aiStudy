@@ -43,6 +43,7 @@ from app.services.slide_dsl_service import (
     get_asset_slides_snapshot,
 )
 from app.services.slide_generation_v2_service import (
+    enqueue_asset_slides_runtime_bundle_rebuild,
     generate_asset_slides_runtime_bundle,
 )
 from app.services.slide_html_authoring_service import render_slide_page
@@ -83,6 +84,7 @@ __all__ = [
     "build_scene_specs",
     "render_slide_page",
     "build_runtime_bundle",
+    "enqueue_asset_slides_runtime_bundle_rebuild",
     "generate_asset_slides_runtime_bundle",
     "list_assets",
     "list_asset_notes",

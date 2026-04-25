@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.asset import Asset
 from app.models.asset_file import AssetFile
+from app.models.presentation import Presentation
 from app.models.user import User
 from app.schemas.asset import (
     AssetDeleteResponse,
@@ -21,6 +22,9 @@ from app.services.oss_service import (
     OSSConfigurationError,
     delete_asset_prefix_objects,
     delete_objects,
+)
+from app.services.slide_processing_recovery_service import (
+    recover_stale_slides_processing,
 )
 
 
@@ -63,6 +67,18 @@ def get_asset_detail(db: Session, asset_id: str) -> AssetDetail | None:
     asset = db.get(Asset, asset_id)
     if asset is None:
         return None
+
+    presentation = getattr(asset, "presentation", None)
+    if presentation is None:
+        presentation = db.scalars(
+            select(Presentation).where(Presentation.asset_id == asset_id)
+        ).first()
+
+    recover_stale_slides_processing(
+        db,
+        asset=asset,
+        presentation=presentation,
+    )
     return _to_asset_detail(asset)
 
 

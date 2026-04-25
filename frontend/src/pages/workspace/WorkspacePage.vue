@@ -140,10 +140,12 @@ const canRenderReader = computed(() => Boolean(asset.value && pdfMeta.value));
 const canAskQuestion = computed(() => (asset.value?.basic_resources.kb_status ?? '') === 'ready');
 const parseTaskLabel = computed(() => parseStatus.value?.latest_parse?.task.state ?? '未开始');
 const slidesStatus = computed(() => asset.value?.enhanced_resources.slides_status ?? 'not_generated');
-const canOpenSlides = computed(() => slidesStatus.value === 'ready');
+const slidesPlaybackStatus = computed(() => slidesSnapshot.value?.playback_status ?? 'not_ready');
+const slidesRebuilding = computed(() => Boolean(slidesSnapshot.value?.rebuilding));
+const canOpenSlides = computed(() => ['ready', 'partial_ready'].includes(slidesPlaybackStatus.value));
 const slidesProcessingSince = ref<number | null>(null);
 const slidesProcessingHint = computed(() => {
-  if (slidesStatus.value !== 'processing') {
+  if (!slidesRebuilding.value) {
     return '';
   }
   if (slidesProcessingSince.value === null) {
@@ -263,6 +265,7 @@ function shouldUseActivePolling(snapshot: WorkspaceStatusSnapshot): boolean {
     ['queued', 'processing'].includes(snapshot.parseStatus)
     || snapshot.mindmapStatus === 'processing'
     || snapshot.slidesStatus === 'processing'
+    || Boolean(slidesSnapshot.value?.rebuilding)
   );
 }
 
@@ -364,7 +367,7 @@ async function refreshWorkspaceLight() {
       slidesSnapshot.value = slidesResult;
     }
     syncMindmapStatus(assetDetail.basic_resources.mindmap_status);
-    syncSlidesProcessingClock(assetDetail.enhanced_resources.slides_status);
+    syncSlidesProcessingClock(slidesResult?.rebuilding ? 'processing' : assetDetail.enhanced_resources.slides_status);
 
     const next = currentStatusSnapshot();
     const parseBecameReady = previous.parseStatus !== 'ready' && next.parseStatus === 'ready';
@@ -458,7 +461,7 @@ async function loadWorkspace() {
     if (slidesSnapshotResult) {
       slidesSnapshot.value = slidesSnapshotResult;
     }
-    syncSlidesProcessingClock(assetDetail.enhanced_resources.slides_status);
+    syncSlidesProcessingClock(slidesSnapshotResult?.rebuilding ? 'processing' : assetDetail.enhanced_resources.slides_status);
 
     const [parsedDocumentResult, pdfMetaResult, mindmapResult] = await Promise.allSettled([
       fetchAssetParsedDocument(assetId.value),
@@ -1077,6 +1080,7 @@ onUnmounted(() => {
             <span class="summary-badge">{{ asset.source_type === 'preset' ? '预设论文' : '用户上传' }}</span>
             <span class="summary-badge summary-badge--status">{{ parseStatus?.parse_status ?? asset.basic_resources.parse_status }}</span>
             <span class="summary-badge">Slides: {{ slidesStatus }}</span>
+            <span class="summary-badge">Playback: {{ slidesPlaybackStatus }}</span>
           </div>
 
           <p class="workspace-authors">{{ asset.authors.join(' · ') }}</p>
@@ -1087,7 +1091,7 @@ onUnmounted(() => {
             <button
               class="toolbar-button toolbar-button--ghost"
               type="button"
-              :disabled="rebuildingSlides || slidesStatus === 'processing'"
+              :disabled="rebuildingSlides || slidesRebuilding"
               @click="handleRebuildSlides"
             >
               {{ rebuildingSlides ? '重建中...' : '重新生成演示内容' }}

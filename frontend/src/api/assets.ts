@@ -139,10 +139,32 @@ export interface AssetMindmapRebuildResponse {
   message: string;
 }
 
+export interface AssetSlidesRebuildMeta {
+  from_stage: 'full' | 'scene' | 'html' | 'runtime';
+  requested_page_numbers: number[];
+  effective_page_numbers: number[];
+  failed_only: boolean;
+  reused_layers: string[];
+  rebuilt_layers: string[];
+}
+
+export interface AssetSlidesRebuildRequest {
+  from_stage?: 'full' | 'scene' | 'html' | 'runtime';
+  page_numbers?: number[];
+  failed_only?: boolean;
+  reuse_analysis_pack?: boolean;
+  reuse_presentation_plan?: boolean;
+  debug_target?: 'analysis' | 'plan' | 'scene' | 'html' | 'full';
+}
+
 export interface AssetSlidesRebuildResponse {
   asset_id: string;
   slides_status: string;
   schema_version: string | null;
+  playback_status: 'not_ready' | 'partial_ready' | 'ready';
+  playable_page_count: number;
+  failed_page_numbers: number[];
+  rebuild_meta?: AssetSlidesRebuildMeta | null;
   runtime_bundle?: SlidesRuntimeBundle | null;
 }
 
@@ -478,6 +500,11 @@ export interface SlidePlaybackPlan {
   pages: SlidePlaybackPagePlan[];
 }
 
+export interface SlideRuntimeValidationSummary {
+  status: 'not_ready' | 'partial_ready' | 'ready';
+  reason?: string | null;
+}
+
 export interface RuntimeRenderedPage {
   page_id: string;
   html: string;
@@ -489,6 +516,9 @@ export interface RuntimeRenderedPage {
 export interface SlidesRuntimeBundle {
   page_count: number;
   pages: RuntimeRenderedPage[];
+  playable_page_count: number;
+  failed_page_numbers: number[];
+  validation_summary: SlideRuntimeValidationSummary;
 }
 
 export interface AssetSlidesResponse {
@@ -497,9 +527,12 @@ export interface AssetSlidesResponse {
   schema_version: string | null;
   rebuilding: boolean;
   rebuild_reason: string | null;
+  rebuild_meta?: AssetSlidesRebuildMeta | null;
   tts_status: 'not_generated' | 'processing' | 'ready' | 'failed' | 'partial';
-  playback_status: 'not_ready' | 'ready';
+  playback_status: 'not_ready' | 'partial_ready' | 'ready';
   auto_page_supported: boolean;
+  playable_page_count: number;
+  failed_page_numbers: number[];
   slides_dsl: SlidesDslPayload | null;
   runtime_bundle?: SlidesRuntimeBundle | null;
   must_pass_report: SlideMustPassReport | null;
@@ -806,8 +839,11 @@ export function fetchAssetSlides(assetId: string): Promise<AssetSlidesResponse> 
   return requestJson<AssetSlidesResponse>(`/api/assets/${assetId}/slides`);
 }
 
-export function rebuildAssetSlides(assetId: string): Promise<AssetSlidesRebuildResponse> {
-  return postJson<AssetSlidesRebuildResponse>(`/api/assets/${assetId}/slides/runtime-bundle/rebuild`, {});
+export function rebuildAssetSlides(
+  assetId: string,
+  payload: AssetSlidesRebuildRequest = {},
+): Promise<AssetSlidesRebuildResponse> {
+  return postJson<AssetSlidesRebuildResponse>(`/api/assets/${assetId}/slides/runtime-bundle/rebuild`, payload);
 }
 
 export function ensureAssetSlideTts(

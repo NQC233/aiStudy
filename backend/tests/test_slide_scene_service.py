@@ -45,6 +45,46 @@ class SlideSceneServiceTestCase(unittest.TestCase):
         self.assertEqual(scenes[0]["page_id"], "page-1")
         self.assertEqual(scenes[0]["layout_strategy"], "hero-visual-right")
 
+    def test_build_scene_specs_preserves_page_budget_contract(self) -> None:
+        presentation_plan = {
+            "page_count": 1,
+            "pages": [
+                {
+                    "page_id": "page-1",
+                    "scene_role": "method",
+                    "narrative_goal": "解释方法结构",
+                    "content_focus": "method_components",
+                    "visual_strategy": "text_plus_original_figure",
+                    "candidate_assets": ["fig-1"],
+                    "animation_intent": "stagger_reveal",
+                    "page_budget": {
+                        "max_blocks": 2,
+                        "content_budget": {"bullet_max_items": 4},
+                        "overflow_strategy": {"mode": "trim_then_split"},
+                        "continuation_policy": {"enabled": True, "max_extra_pages": 3},
+                    },
+                }
+            ],
+        }
+
+        scenes = build_scene_specs(
+            presentation_plan,
+            scene_writer=lambda page: {
+                "page_id": page["page_id"],
+                "title": "Transformer Architecture",
+                "summary_line": "自注意力替代循环。",
+                "layout_strategy": "hero-visual-right",
+                "content_blocks": [{"type": "bullets", "items": ["Encoder", "Decoder"]}],
+                "citations": [{"page_no": 4, "block_ids": ["block-1"]}],
+                "asset_bindings": [{"asset_id": "fig-1"}],
+                "animation_plan": {"type": "stagger_reveal"},
+                "speaker_note_seed": "先讲整体结构。",
+            },
+        )
+
+        self.assertEqual(scenes[0]["page_budget"]["max_blocks"], 2)
+        self.assertEqual(scenes[0]["overflow_strategy"]["mode"], "trim_then_split")
+
     def test_build_scene_specs_default_path_passes_analysis_and_visual_context(self) -> None:
         presentation_plan = {
             "page_count": 1,
@@ -197,6 +237,22 @@ class SlideSceneServiceTestCase(unittest.TestCase):
         self.assertEqual(scenes[0]["_debug"]["scene_source"], "generated")
         self.assertEqual(scenes[1]["_debug"]["scene_source"], "fallback")
         self.assertTrue(scenes[1]["_debug"]["is_empty_scene"])
+
+    def test_build_scene_specs_preserves_scene_failure_reason_in_fallback_debug(self) -> None:
+        presentation_plan = {
+            "page_count": 1,
+            "pages": [
+                {"page_id": "page-1", "scene_role": "method", "narrative_goal": "解释方法"},
+            ],
+        }
+
+        scenes = build_scene_specs(
+            presentation_plan,
+            scene_generator=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("scene llm timeout")),
+        )
+
+        self.assertEqual(scenes[0]["_debug"]["scene_source"], "fallback")
+        self.assertEqual(scenes[0]["_debug"].get("reason"), "scene llm timeout")
 
 
 if __name__ == "__main__":

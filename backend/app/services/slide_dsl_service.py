@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.asset import Asset
 from app.models.presentation import Presentation
 from app.schemas.slide_dsl import (
+    AssetSlidesRebuildMeta,
     AssetSlidesResponse,
     MustPassReport,
     QualityScoreReport,
@@ -24,6 +25,10 @@ from app.services.slide_playback_service import (
     build_tts_manifest_placeholders,
     resolve_tts_status,
 )
+from app.services.slide_processing_recovery_service import (
+    recover_stale_slides_processing,
+)
+from app.services.slide_runtime_bundle_service import summarize_runtime_bundle
 
 
 def _require_asset(db: Session, asset_id: str) -> Asset:
@@ -98,7 +103,16 @@ def _build_runtime_bundle_from_slides_dsl(
             )
         )
 
-    return SlidesRuntimeBundle(page_count=len(pages), pages=pages)
+    bundle_payload = summarize_runtime_bundle(
+        {"page_count": len(pages), "pages": [page.model_dump(mode="json") for page in pages]}
+    )
+    return SlidesRuntimeBundle(
+        page_count=len(pages),
+        pages=pages,
+        playable_page_count=bundle_payload["playable_page_count"],
+        failed_page_numbers=bundle_payload["failed_page_numbers"],
+        validation_summary=bundle_payload["validation_summary"],
+    )
 
 
 def get_asset_slides_snapshot(db: Session, asset_id: str) -> AssetSlidesResponse:
@@ -109,6 +123,12 @@ def get_asset_slides_snapshot(db: Session, asset_id: str) -> AssetSlidesResponse
     if presentation is None:
         return AssetSlidesResponse(asset_id=asset.id, slides_status=asset.slides_status)
 
+    rebuild_reason = recover_stale_slides_processing(
+        db,
+        asset=asset,
+        presentation=presentation,
+    )
+
     slides_dsl = (
         SlidesDslPayload.model_validate(presentation.slides_dsl)
         if presentation.slides_dsl
@@ -116,7 +136,16 @@ def get_asset_slides_snapshot(db: Session, asset_id: str) -> AssetSlidesResponse
     )
     runtime_bundle_payload = getattr(presentation, "runtime_bundle", None)
     if isinstance(runtime_bundle_payload, dict):
-        runtime_bundle = SlidesRuntimeBundle.model_validate(runtime_bundle_payload)
+        runtime_bundle_summary = summarize_runtime_bundle(runtime_bundle_payload)
+        runtime_bundle = SlidesRuntimeBundle.model_validate(
+            {
+                **runtime_bundle_payload,
+                "page_count": runtime_bundle_summary["page_count"],
+                "playable_page_count": runtime_bundle_summary["playable_page_count"],
+                "failed_page_numbers": runtime_bundle_summary["failed_page_numbers"],
+                "validation_summary": runtime_bundle_summary["validation_summary"],
+            }
+        )
     else:
         runtime_bundle = _build_runtime_bundle_from_slides_dsl(slides_dsl)
     must_pass_report = None
@@ -159,15 +188,41 @@ def get_asset_slides_snapshot(db: Session, asset_id: str) -> AssetSlidesResponse
         playback_plan = build_playback_plan_from_slides(slides_dsl)
 
     tts_status = resolve_tts_status([item.status for item in tts_manifest.pages])
-    playback_status = "ready" if runtime_bundle and runtime_bundle.pages else "not_ready"
+    runtime_bundle_summary = summarize_runtime_bundle(
+        runtime_bundle.model_dump(mode="json") if runtime_bundle is not None else None
+    )
+    playback_status = runtime_bundle_summary["validation_summary"]["status"]
+    rebuild_meta = None
+    rebuilding = False
+    presentation_error_meta = getattr(presentation, "error_meta", None)
+    if isinstance(presentation_error_meta, dict):
+        rebuild_meta_payload = presentation_error_meta.get("rebuild_meta")
+        if isinstance(rebuild_meta_payload, dict):
+            rebuild_meta = AssetSlidesRebuildMeta.model_validate(rebuild_meta_payload)
+
+    active_run_token = getattr(presentation, "active_run_token", None)
+    if (
+        isinstance(active_run_token, str)
+        and active_run_token.strip()
+        and asset.slides_status == "processing"
+        and getattr(presentation, "status", None) == "processing"
+    ):
+        rebuilding = True
+        if rebuild_reason is None:
+            rebuild_reason = "runtime_bundle_rebuild"
 
     return AssetSlidesResponse(
         asset_id=asset.id,
         slides_status=asset.slides_status,
         schema_version=slides_dsl.schema_version if slides_dsl is not None else None,
+        rebuilding=rebuilding,
+        rebuild_reason=rebuild_reason,
         tts_status=tts_status,
+        rebuild_meta=rebuild_meta,
         playback_status=playback_status,
-        auto_page_supported=playback_status == "ready",
+        auto_page_supported=playback_status in {"ready", "partial_ready"},
+        playable_page_count=runtime_bundle_summary["playable_page_count"],
+        failed_page_numbers=runtime_bundle_summary["failed_page_numbers"],
         slides_dsl=None,
         runtime_bundle=runtime_bundle,
         must_pass_report=must_pass_report,

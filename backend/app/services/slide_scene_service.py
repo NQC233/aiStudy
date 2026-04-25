@@ -7,7 +7,18 @@ from typing import Any
 from app.services.llm_service import generate_slide_scene_spec
 
 
-def _default_scene_writer(page: dict[str, object]) -> dict[str, object]:
+def _scene_budget_fields(page: dict[str, object]) -> dict[str, object]:
+    page_budget = page.get("page_budget") if isinstance(page.get("page_budget"), dict) else {}
+    overflow_strategy = page_budget.get("overflow_strategy") if isinstance(page_budget, dict) else {}
+    continuation_policy = page_budget.get("continuation_policy") if isinstance(page_budget, dict) else {}
+    return {
+        "page_budget": page_budget,
+        "overflow_strategy": overflow_strategy if isinstance(overflow_strategy, dict) else {},
+        "continuation_policy": continuation_policy if isinstance(continuation_policy, dict) else {},
+    }
+
+
+def _default_scene_writer(page: dict[str, object], *, reason: str = "") -> dict[str, object]:
     narrative_goal = str(page.get("narrative_goal", "Paper Overview")).strip() or "Paper Overview"
     candidate_assets = page.get("candidate_assets")
     asset_bindings = []
@@ -26,8 +37,10 @@ def _default_scene_writer(page: dict[str, object]) -> dict[str, object]:
         "asset_bindings": asset_bindings,
         "animation_plan": {"type": page.get("animation_intent", "soft_intro")},
         "speaker_note_seed": narrative_goal,
+        **_scene_budget_fields(page),
         "_debug": {
             "scene_source": "fallback",
+            "reason": reason,
             "is_empty_scene": True,
             "content_blocks_count": 0,
             "citations_count": 0,
@@ -73,6 +86,18 @@ def _call_scene_generator(
         return scene_generator(page, analysis_pack, visual_asset_catalog)
 
 
+def _call_scene_fallback_writer(
+    scene_writer: Callable[[dict[str, object]], dict[str, object]],
+    page: dict[str, object],
+    *,
+    reason: str,
+) -> dict[str, object]:
+    try:
+        return scene_writer(page, reason=reason)
+    except TypeError:
+        return scene_writer(page)
+
+
 def build_scene_specs(
     presentation_plan: dict[str, object],
     *,
@@ -97,7 +122,7 @@ def build_scene_specs(
     def build_one(page: dict[str, object]) -> dict[str, object]:
         try:
             if scene_generator is not None:
-                return _annotate_scene_debug(
+                scene = _annotate_scene_debug(
                     _call_scene_generator(
                         scene_generator,
                         page,
@@ -107,8 +132,12 @@ def build_scene_specs(
                     ),
                     scene_source="generated",
                 )
+                return {
+                    **scene,
+                    **_scene_budget_fields(page),
+                }
             if scene_writer is _default_scene_writer:
-                return _annotate_scene_debug(
+                scene = _annotate_scene_debug(
                     generate_slide_scene_spec(
                         page,
                         effective_analysis_pack,
@@ -117,9 +146,17 @@ def build_scene_specs(
                     ),
                     scene_source="generated",
                 )
-            return _annotate_scene_debug(scene_writer(page), scene_source="generated")
-        except Exception:
-            return scene_writer(page)
+                return {
+                    **scene,
+                    **_scene_budget_fields(page),
+                }
+            scene = _annotate_scene_debug(scene_writer(page), scene_source="generated")
+            return {
+                **scene,
+                **_scene_budget_fields(page),
+            }
+        except Exception as exc:
+            return _call_scene_fallback_writer(scene_writer, page, reason=str(exc))
 
     effective_parallelism = max(1, int(parallelism or 1))
     if effective_parallelism == 1 or len(pages) <= 1:

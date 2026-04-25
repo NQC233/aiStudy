@@ -34,6 +34,7 @@ from app.schemas.slide_dsl import (
     AssetSlideTtsEnsureResponse,
     AssetSlideTtsRetryNextRequest,
     AssetSlideTtsRetryNextResponse,
+    AssetSlidesRebuildRequest,
     AssetSlidesResponse,
 )
 from app.schemas.asset_upload import AssetUploadResponse
@@ -42,11 +43,11 @@ from app.services import (
     create_asset_note,
     create_asset_chat_session,
     create_uploaded_asset,
+    enqueue_asset_slides_runtime_bundle_rebuild,
     enqueue_asset_mindmap_rebuild,
     enqueue_asset_chunk_rebuild,
     enqueue_asset_parse_retry,
     ensure_asset_slide_tts,
-    generate_asset_slides_runtime_bundle,
     get_asset_mindmap,
     get_asset_slides_snapshot,
     get_asset_parse_status,
@@ -67,6 +68,7 @@ from app.services.asset_service import delete_asset, get_asset_detail, list_asse
 from app.workers.tasks import (
     enqueue_build_asset_kb,
     enqueue_generate_asset_mindmap,
+    enqueue_generate_asset_slides_runtime_bundle,
     enqueue_generate_asset_slide_tts,
     enqueue_parse_asset,
 )
@@ -200,10 +202,37 @@ def get_asset_slides_endpoint(
 )
 def rebuild_asset_runtime_bundle_slides_endpoint(
     asset_id: str,
+    payload: AssetSlidesRebuildRequest,
     db: Session = Depends(get_db),
 ) -> AssetSlidesResponse:
-    """同步执行新主链路，生成并持久化 runtime bundle。"""
-    generate_asset_slides_runtime_bundle(db, asset_id=asset_id)
+    """将 slides runtime bundle 重建请求加入 Celery 队列。"""
+    try:
+        asset, presentation = enqueue_asset_slides_runtime_bundle_rebuild(
+            db,
+            asset_id=asset_id,
+            from_stage=payload.from_stage,
+            page_numbers=payload.page_numbers,
+            failed_only=payload.failed_only,
+            reuse_analysis_pack=payload.reuse_analysis_pack,
+            reuse_presentation_plan=payload.reuse_presentation_plan,
+            debug_target=payload.debug_target,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    task = enqueue_generate_asset_slides_runtime_bundle.delay(
+        asset.id,
+        from_stage=payload.from_stage,
+        page_numbers=payload.page_numbers,
+        failed_only=payload.failed_only,
+        reuse_analysis_pack=payload.reuse_analysis_pack,
+        reuse_presentation_plan=payload.reuse_presentation_plan,
+        debug_target=payload.debug_target,
+    )
+    presentation.active_run_token = getattr(task, "id", None)
+    db.commit()
     return get_asset_slides_snapshot(db, asset_id)
 
 

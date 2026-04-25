@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_debug: bool = True
-    backend_cors_origins: str = "http://localhost:5173"
+    backend_cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     max_upload_size_mb: int = 50
     remote_file_fetch_timeout_sec: int = 15
 
@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     dashscope_model_name: str = "qwen-max"
     dashscope_slides_analysis_model_name: str = "qwen3.6-plus"
     dashscope_slides_vision_model_name: str = "qwen3.6-plus"
+    dashscope_slides_scene_model_name: str = "qwen3.6-plus"
     dashscope_slides_html_model_name: str = "qwen3.6-plus"
     dashscope_slides_timeout_sec: int = 240
     dashscope_slides_planner_timeout_sec: int = 240
@@ -78,7 +79,16 @@ class Settings(BaseSettings):
     slides_shadow_eval_enabled: bool = True
     slides_scene_parallelism: int = 3
     slides_html_parallelism: int = 3
-    slides_processing_stale_timeout_sec: int = 300
+    slides_html_canvas_width: int = 1600
+    slides_html_canvas_height: int = 900
+    slides_html_validation_enabled: bool = True
+    slides_html_validation_timeout_sec: int = 15
+    slides_html_batch_timeout_sec: int = 600
+    slides_html_batch_max_pages: int = 12
+    slides_html_batch_chunk_size: int = 4
+    slides_html_rebuild_timeout_sec: int = 180
+    slides_html_failed_only_max_ratio: float = 0.3
+    slides_processing_stale_timeout_sec: int = 1800
     slides_auto_upgrade_legacy_dsl_enabled: bool = True
     qa_context_max_hits: int = 2
     qa_context_chars_per_hit: int = 320
