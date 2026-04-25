@@ -29,7 +29,11 @@
 
 ## 4. 交接记录
 
-### 第 0 轮（立项占位）
+### 第 1 轮（主题与页面壳统一）
 
-- 已确认此 Spec 作为 Spec 15 后续阶段执行
-- 当前仅冻结范围和依赖，不进入实现
+- 已完成 `frontend/src/styles/base.css` 的 warm-dark token 收口，补齐统一的 ready / processing / failed / muted 状态语义
+- 已完成 `LibraryPage.vue` 的入口页重写：强化入口文案、资产状态概览与空态表达
+- 已完成 `WorkspacePage.vue` 的顶部摘要区收口：统一 Parse / Slides / Playback 状态 badge 与主 CTA 层级
+- 已完成 `SlidesPlayPage.vue` 的播放页壳层重写，并移除原先 scoped 浅色主题，改为复用全局 warm-dark 设计语言
+- 已执行 `npm run build --prefix frontend`，当前构建通过
+- 当前仍待完成真实手动链路验收：`Library -> Workspace -> SlidesPlay -> Workspace`，以及播放 / 重建 / 返回路径的浏览器走查

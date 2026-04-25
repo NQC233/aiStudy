@@ -25,3 +25,6 @@ docs/specs/spec-12d-question-dataset.jsonl
 
 Paper2Slides/
 thesis/
+
+.claude/
+.playwright-mcp/

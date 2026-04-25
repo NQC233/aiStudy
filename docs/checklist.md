@@ -60,7 +60,7 @@
 - [x] Spec 15 调试观测已补齐 Level 2/3 内层来源标记：现可区分 plan 内层 fallback 与 scene 空壳成功，避免外层 `success` 掩盖真实退化路径
 - [x] Spec 15.2 已完成后端 ready/playback 门禁统一、page-level validation 接线、runtime bundle 快照汇总、前端播放页按页重建 / failed-only 入口与对应 E2E
 - [x] Slides 播放页已支持基于现有 HTML runtime 的 Fullscreen API 全屏预览，不再引入第二套渲染系统
-- [x] 项目环境变量治理口径已明确：`/.env.example` 为唯一模板、`/.env` 为唯一实际本地值、backend/worker 统一走 `Settings`、frontend 仅允许读取 `VITE_*`
+- [x] Spec 15.2 已完成阶段收尾，后续主线顺序确认为：Spec 16（前端整体体验优化）-> Spec 17（毕业设计收尾：页级 TTS 与自动翻页闭环）
 
 ## 3. 当前待确认事项
 
@@ -92,14 +92,32 @@
 - [x] Spec 11A：演示文稿领域模型与备课层生成
 - [x] Spec 11B：页面 DSL 生成与分级校验
 - [x] Spec 11C：演示播放页与工作区入口（当前为自研分页渲染）
+- [x] Spec 12：TTS 与自动翻页（核心链路已完成，后续演示内容与播放体验增强迁移至 Spec 15）
+- [x] Spec 12D：RAG 评测协议与优化闭环（已锁定 S0(single-turn)、完成 P95 收敛并通过最终回归门禁）
+- [x] Spec 15：Paper-to-Slides 主生成系统重构
+- [x] Spec 15.1：Slides HTML Runtime 与播放壳重构
+- [x] Spec 15.2：Slides Runtime 修复与调试成本治理
 
 ### 进行中
 
-- [x] Spec 12：TTS 与自动翻页（核心链路已完成，后续演示内容与播放体验增强迁移至 Spec 15）
-- [x] Spec 12D：RAG 评测协议与优化闭环（已锁定 S0(single-turn)、完成 P95 收敛并通过最终回归门禁）
-- [ ] Spec 15：Paper-to-Slides 主生成系统重构（进行中：analysis/planning/scene/HTML 主链路、并行执行与 artifacts 持久化已落地，继续收敛 runtime 质量）
-- [ ] Spec 15.1：Slides HTML Runtime 与播放壳重构（进行中：HTML runtime、播放页强 gate、workspace 门禁与 fullscreen 已落地）
-- [ ] Spec 15.2：Slides Runtime 修复与调试成本治理（进行中：validation 生产链路、固定画布 prompt、failed-only/page rebuild UI、环境变量治理规范、batch 首轮生成与真实资产问题分析 handoff 已落地；待补浏览器实测级 gate、batch prompt 质量修复与 iframe 缩放修复）
+- [ ] Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay，视觉收口与前端 build 已完成，待真实手动链路验收）
+- [ ] Spec 17：毕业设计收尾（页级 TTS 与自动翻页闭环）
+
+### Spec 16 本轮追加记录（前端体验首轮收口）
+
+- 完成内容：
+  - `frontend/src/styles/base.css` 已统一三页 warm-dark token、surface 层级与 ready / processing / failed / muted 状态语义
+  - `frontend/src/pages/library/LibraryPage.vue` 已改为产品入口式 Library Hero，补充 ready / processing / failed 概览与空态表达
+  - `frontend/src/pages/workspace/WorkspacePage.vue` 已统一顶部工作台摘要区，显式展示 Parse / Slides / Playback 状态 badge，并保持原有右侧 tab 工作流不变
+  - `frontend/src/pages/slides/SlidesPlayPage.vue` 已移除原 scoped 浅色主题，改为复用全局 warm-dark 壳层与播放 / 重建 / notes 语义
+- 验证结果：
+  - `npm run build --prefix frontend` 通过
+- 当前已知缺口：
+  - 本轮尚未完成真实浏览器手动链路验收，尚未逐项确认 `Library -> Workspace -> SlidesPlay -> Workspace`、翻页、播放、暂停、失败页重建与返回入口
+- 下一轮建议：
+  - 启动前端并按 Spec 16 链路做一次真实走查，再根据视觉细节补最后一轮 spacing / hierarchy 微调
+- 建议提交信息：
+  - `feat: unify library workspace and slides warm-dark shell`
 
 ### Spec 15.2 本轮追加记录
 
@@ -372,6 +390,7 @@
 ### 待开始
 
 - [ ] Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay）
+- [ ] Spec 17：毕业设计收尾（页级 TTS 与自动翻页闭环）
 
 ### 暂缓到后续阶段
 
@@ -400,8 +419,9 @@
 18. Spec 15.1：Slides HTML Runtime 与播放壳重构
 19. Spec 15.2：Slides Runtime 修复与调试成本治理
 20. Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay）
-21. Spec 13：Anki CSV 导出
-22. Spec 14：课后习题
+21. Spec 17：毕业设计收尾（页级 TTS 与自动翻页闭环）
+22. Spec 13：Anki CSV 导出
+23. Spec 14：课后习题
 
 ## 6. 每轮开发完成后必须更新的内容
 

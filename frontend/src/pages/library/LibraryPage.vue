@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useRouter } from 'vue-router';
 
@@ -18,6 +18,10 @@ const errorMessage = ref('');
 const assets = ref<AssetListItem[]>([]);
 const dialogOpen = ref(false);
 const deletingAssetId = ref<string | null>(null);
+
+const readyCount = computed(() => assets.value.filter((asset) => asset.status === 'ready').length);
+const processingCount = computed(() => assets.value.filter((asset) => asset.status === 'processing').length);
+const failedCount = computed(() => assets.value.filter((asset) => asset.status === 'failed').length);
 
 async function loadAssets() {
   loading.value = true;
@@ -70,10 +74,10 @@ async function handleDeleteAsset(asset: AssetListItem) {
   <main class="library-page">
     <section class="library-hero">
       <div class="library-hero__copy">
-        <p class="page-kicker">Library / Spec 02</p>
-        <h1>论文图书馆</h1>
+        <p class="page-kicker">Library / Curated Intake</p>
+        <h1>把论文资产整理成可进入工作流的学习入口</h1>
         <p class="page-intro">
-          这里先承接学习资产的基础展示与进入工作区的入口。当前仍是单用户开发模式，但所有数据结构都已经为多用户隔离预留字段。
+          从这里统一查看上传资产、处理进度与可进入的学习工作区。Library 不再只是列表，而是整套产品体验的起点。
         </p>
       </div>
 
@@ -83,16 +87,20 @@ async function handleDeleteAsset(asset: AssetListItem) {
           <strong>{{ assets.length }}</strong>
         </div>
         <div class="stat-card">
-          <span class="stat-card__label">当前阶段</span>
-          <strong>Asset 骨架</strong>
+          <span class="stat-card__label">可进入工作区</span>
+          <strong>{{ readyCount }}</strong>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__label">处理中 / 失败</span>
+          <strong>{{ processingCount }} / {{ failedCount }}</strong>
         </div>
       </div>
     </section>
 
     <section class="library-toolbar">
       <div>
-        <span class="toolbar-label">当前视图</span>
-        <strong>个人图书馆 / 编辑部档案架</strong>
+        <span class="toolbar-label">Current shelf</span>
+        <strong>个人图书馆 / 演示与学习资产入口</strong>
       </div>
 
       <div class="library-toolbar__actions">
@@ -107,7 +115,7 @@ async function handleDeleteAsset(asset: AssetListItem) {
 
     <section v-if="loading" class="empty-panel">
       <p class="page-kicker">Loading</p>
-      <h2>正在加载学习资产...</h2>
+      <h2>正在整理你的学习资产...</h2>
     </section>
 
     <section v-else-if="errorMessage" class="empty-panel empty-panel--error">
@@ -115,6 +123,17 @@ async function handleDeleteAsset(asset: AssetListItem) {
       <h2>{{ errorMessage }}</h2>
       <button class="toolbar-button" type="button" @click="loadAssets">
         重新请求
+      </button>
+    </section>
+
+    <section v-else-if="assets.length === 0" class="empty-panel">
+      <p class="page-kicker">Empty shelf</p>
+      <h2>还没有学习资产</h2>
+      <p class="page-intro">
+        上传第一篇论文后，系统会继续为它生成解析、问答、导图与演示内容。
+      </p>
+      <button class="toolbar-button" type="button" @click="dialogOpen = true">
+        立即上传
       </button>
     </section>
 

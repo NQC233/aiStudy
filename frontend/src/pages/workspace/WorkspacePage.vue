@@ -191,6 +191,33 @@ const slidesRetryingItem = computed(() => {
   return pages.find((item) => item.retry_meta?.auto_retry_pending);
 });
 
+const slidesStatusTone = computed(() => {
+  if (slidesRebuilding.value || slidesStatus.value === 'processing') {
+    return 'processing';
+  }
+  if (['ready', 'partial_ready'].includes(slidesPlaybackStatus.value)) {
+    return 'ready';
+  }
+  if (slidesStatus.value === 'failed' || slidesPlaybackStatus.value === 'failed') {
+    return 'failed';
+  }
+  return 'muted';
+});
+
+const parseStatusTone = computed(() => {
+  const status = parseStatus.value?.parse_status ?? asset.value?.basic_resources.parse_status ?? 'not_started';
+  if (status === 'ready') {
+    return 'ready';
+  }
+  if (['queued', 'processing'].includes(status)) {
+    return 'processing';
+  }
+  if (status === 'failed') {
+    return 'failed';
+  }
+  return 'muted';
+});
+
 const slidesRetrySummary = computed(() => {
   const item = slidesRetryingItem.value;
   if (!item?.retry_meta) {
@@ -1056,7 +1083,7 @@ onUnmounted(() => {
     <section class="workspace-shell">
       <header class="workspace-header">
         <div>
-          <p class="page-kicker">Workspace / Spec 10C</p>
+          <p class="page-kicker">Workspace / Reading Studio</p>
           <h1 v-if="asset">{{ asset.title }}</h1>
           <h1 v-else>阅读器工作区</h1>
         </div>
@@ -1078,9 +1105,9 @@ onUnmounted(() => {
         <section class="workspace-summary">
           <div class="workspace-summary__lead">
             <span class="summary-badge">{{ asset.source_type === 'preset' ? '预设论文' : '用户上传' }}</span>
-            <span class="summary-badge summary-badge--status">{{ parseStatus?.parse_status ?? asset.basic_resources.parse_status }}</span>
-            <span class="summary-badge">Slides: {{ slidesStatus }}</span>
-            <span class="summary-badge">Playback: {{ slidesPlaybackStatus }}</span>
+            <span class="summary-badge" :data-tone="parseStatusTone">Parse: {{ parseStatus?.parse_status ?? asset.basic_resources.parse_status }}</span>
+            <span class="summary-badge" :data-tone="slidesStatusTone">Slides: {{ slidesStatus }}</span>
+            <span class="summary-badge" :data-tone="slidesStatusTone">Playback: {{ slidesPlaybackStatus }}</span>
           </div>
 
           <p class="workspace-authors">{{ asset.authors.join(' · ') }}</p>
