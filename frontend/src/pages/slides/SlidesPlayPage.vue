@@ -6,6 +6,7 @@ import {
   ensureAssetSlideTts,
   fetchAssetDetail,
   fetchAssetSlides,
+  rebuildAssetSlides,
   retryNextAssetSlideTts,
   type AssetDetail,
   type AssetSlidesResponse,
@@ -22,6 +23,7 @@ const loading = ref(false);
 const errorMessage = ref('');
 const playbackMessage = ref('');
 const playbackBusy = ref(false);
+const rebuildBusy = ref(false);
 const failedNextPageIndex = ref<number | null>(null);
 const waitingNextPageIndex = ref<number | null>(null);
 const waitingResumePlayback = ref(false);
@@ -30,16 +32,24 @@ const rebuildingPollTimer = ref<number | null>(null);
 const asset = ref<AssetDetail | null>(null);
 const slidesResponse = ref<AssetSlidesResponse | null>(null);
 const currentSlideIndex = ref(0);
+const selectedRebuildPageNumber = ref(1);
 const audioEl = ref<HTMLAudioElement | null>(null);
 
 const pages = computed<RuntimeRenderedPage[]>(() => slidesResponse.value?.runtime_bundle?.pages ?? []);
+const playbackStatus = computed(() => slidesResponse.value?.playback_status ?? 'not_ready');
+const hasRuntimeBundle = computed(() => Boolean(slidesResponse.value?.runtime_bundle));
+const hasPlayablePages = computed(() => pages.value.length > 0);
+const isPlaybackReady = computed(() => ['ready', 'partial_ready'].includes(playbackStatus.value) && hasRuntimeBundle.value && hasPlayablePages.value);
 const currentPage = computed<RuntimeRenderedPage | null>(() => pages.value[currentSlideIndex.value] ?? null);
+const failedPageNumbers = computed(() => slidesResponse.value?.failed_page_numbers ?? []);
+const hasFailedPages = computed(() => failedPageNumbers.value.length > 0);
 const qualityScore = computed(() => slidesResponse.value?.quality_report?.overall_score ?? null);
 const generationMeta = computed(() => slidesResponse.value?.generation_meta ?? null);
 const shadowReport = computed(() => slidesResponse.value?.shadow_report ?? null);
 const playbackPlan = computed(() => slidesResponse.value?.playback_plan ?? null);
 const ttsManifestItems = computed(() => slidesResponse.value?.tts_manifest?.pages ?? []);
 const effectiveSlidesStatus = computed(() => slidesResponse.value?.slides_status ?? asset.value?.enhanced_resources.slides_status ?? 'unknown');
+const isSlidesRebuilding = computed(() => Boolean(slidesResponse.value?.rebuilding));
 const isSlidesReady = computed(() => effectiveSlidesStatus.value === 'ready');
 const canGoPrev = computed(() => currentSlideIndex.value > 0);
 const canGoNext = computed(() => currentSlideIndex.value < pages.value.length - 1);
@@ -133,6 +143,14 @@ function clampCurrentSlide() {
   currentSlideIndex.value = Math.max(0, Math.min(currentSlideIndex.value, pages.value.length - 1));
 }
 
+function clampSelectedRebuildPageNumber() {
+  if (!pages.value.length) {
+    selectedRebuildPageNumber.value = 1;
+    return;
+  }
+  selectedRebuildPageNumber.value = Math.max(1, Math.min(selectedRebuildPageNumber.value, pages.value.length));
+}
+
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'ArrowLeft') {
     void navigateToSlide(currentSlideIndex.value - 1, true);
@@ -151,25 +169,69 @@ async function refreshSlides() {
   slidesResponse.value = slides;
 }
 
+async function submitRuntimeRebuild(payload: { from_stage: 'html'; page_numbers?: number[]; failed_only?: boolean }) {
+  rebuildBusy.value = true;
+  playbackMessage.value = '';
+
+  try {
+    await rebuildAssetSlides(assetId.value, payload);
+    await refreshSlides();
+    playbackMessage.value = payload.failed_only
+      ? '已提交失败页 HTML 重建，正在刷新演示状态。'
+      : `已提交第 ${payload.page_numbers?.[0] ?? selectedRebuildPageNumber.value} 页 HTML 重建，正在刷新演示状态。`;
+
+    if (slidesResponse.value?.rebuilding) {
+      scheduleRebuildingPoll();
+    }
+  } catch (error) {
+    playbackMessage.value = error instanceof Error ? error.message : '提交 HTML 重建失败。';
+  } finally {
+    rebuildBusy.value = false;
+  }
+}
+
+async function rebuildSelectedPageHtml() {
+  await submitRuntimeRebuild({
+    from_stage: 'html',
+    page_numbers: [selectedRebuildPageNumber.value],
+  });
+}
+
+async function rebuildFailedPagesHtml() {
+  await submitRuntimeRebuild({
+    from_stage: 'html',
+    failed_only: true,
+  });
+}
+
 async function loadSlides() {
   loading.value = true;
   errorMessage.value = '';
+  playbackMessage.value = '';
 
   try {
     await refreshSlides();
     const slides = slidesResponse.value;
+    const isRebuilding = Boolean(slides?.rebuilding);
+    const hasRuntimePages = Boolean(slides?.runtime_bundle && slides.runtime_bundle.pages.length > 0);
+    const hasPlayableRuntimeBundle = Boolean(slides?.runtime_bundle && ['ready', 'partial_ready'].includes(slides.playback_status) && slides.runtime_bundle.pages.length > 0);
 
-    if (!slides?.runtime_bundle || slides.slides_status !== 'ready') {
-      if (slides?.rebuilding || slides?.rebuild_reason === 'schema_upgrade_rebuild' || slides?.slides_status === 'processing') {
-        playbackMessage.value = '检测到旧版演示结构，系统正在自动升级重建，请稍后自动刷新。';
-        scheduleRebuildingPoll();
-        return;
-      }
-      throw new Error('当前演示内容尚未就绪，请先在工作区触发生成。');
+    if (isRebuilding) {
+      playbackMessage.value = slides?.rebuild_reason === 'schema_upgrade_rebuild'
+        ? '检测到旧版演示结构，系统正在自动升级重建，请稍后自动刷新。'
+        : '演示内容正在后台重建，请稍后自动刷新。';
+      scheduleRebuildingPoll();
+      return;
+    }
+    if (!hasRuntimePages) {
+      clearRebuildingPoll();
+      throw new Error('当前演示内容尚未就绪，请返回工作区重建或重试。');
     }
     clearRebuildingPoll();
+    selectedRebuildPageNumber.value = currentSlideIndex.value + 1;
     syncToSlideStart(currentSlideIndex.value);
     clampCurrentSlide();
+    clampSelectedRebuildPageNumber();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '演示页面加载失败。';
   } finally {
@@ -478,11 +540,11 @@ watch(
 );
 
 watch(
-  () => slidesResponse.value?.slides_status,
-  (status) => {
-    if (status === 'processing' && slidesResponse.value?.rebuilding) {
+  () => [slidesResponse.value?.slides_status, slidesResponse.value?.rebuilding, slidesResponse.value?.playback_status] as const,
+  ([status, rebuilding, nextPlaybackStatus]) => {
+    if (rebuilding) {
       scheduleRebuildingPoll();
-    } else if (status === 'ready') {
+    } else if (nextPlaybackStatus === 'ready' || !rebuilding) {
       clearRebuildingPoll();
     }
   },
@@ -492,6 +554,17 @@ watch(
   () => pages.value.length,
   () => {
     clampCurrentSlide();
+    clampSelectedRebuildPageNumber();
+  },
+);
+
+watch(
+  () => currentSlideIndex.value,
+  (index) => {
+    if (!pages.value.length) {
+      return;
+    }
+    selectedRebuildPageNumber.value = index + 1;
   },
 );
 
@@ -570,6 +643,50 @@ onUnmounted(() => {
         </div>
       </section>
 
+      <section v-else-if="!isPlaybackReady" class="slides-empty">
+        <p>{{ playbackMessage || '当前演示内容尚未就绪，请返回工作区重建或重试。' }}</p>
+        <section v-if="hasRuntimeBundle && pages.length" class="slides-rebuild-controls" aria-label="HTML 重建控制">
+          <div class="slides-rebuild-controls__copy">
+            <p class="slides-rebuild-controls__title">HTML 重建</p>
+            <p class="slides-rebuild-controls__meta">
+              失败页：{{ hasFailedPages ? failedPageNumbers.join('、') : '无' }}
+            </p>
+          </div>
+          <label class="slides-rebuild-controls__field">
+            <span>目标页</span>
+            <select v-model.number="selectedRebuildPageNumber" :disabled="rebuildBusy || !pages.length">
+              <option v-for="(_, index) in pages" :key="`rebuild-empty-page-${index + 1}`" :value="index + 1">
+                第 {{ index + 1 }} 页
+              </option>
+            </select>
+          </label>
+          <button
+            type="button"
+            class="toolbar-button toolbar-button--ghost"
+            :disabled="rebuildBusy || !pages.length"
+            @click="rebuildSelectedPageHtml"
+          >
+            {{ rebuildBusy ? '提交中...' : '重建所选页 HTML' }}
+          </button>
+          <button
+            type="button"
+            class="toolbar-button"
+            :disabled="rebuildBusy || !hasFailedPages"
+            @click="rebuildFailedPagesHtml"
+          >
+            {{ rebuildBusy ? '提交中...' : '仅重建失败页' }}
+          </button>
+        </section>
+        <div class="slides-error-actions">
+          <button type="button" class="toolbar-button toolbar-button--ghost" @click="backToWorkspace">
+            返回工作区
+          </button>
+          <button type="button" class="toolbar-button" @click="recoverSlidesAndBack">
+            返回工作区并处理
+          </button>
+        </div>
+      </section>
+
       <section v-else class="slides-layout">
         <section class="slides-stage">
           <header class="slides-stage__toolbar">
@@ -610,6 +727,38 @@ onUnmounted(() => {
           </section>
 
           <p v-if="playbackMessage" class="slides-playback-message">{{ playbackMessage }}</p>
+          <section class="slides-rebuild-controls" aria-label="HTML 重建控制">
+            <div class="slides-rebuild-controls__copy">
+              <p class="slides-rebuild-controls__title">HTML 重建</p>
+              <p class="slides-rebuild-controls__meta">
+                失败页：{{ hasFailedPages ? failedPageNumbers.join('、') : '无' }}
+              </p>
+            </div>
+            <label class="slides-rebuild-controls__field">
+              <span>目标页</span>
+              <select v-model.number="selectedRebuildPageNumber" :disabled="rebuildBusy || !pages.length">
+                <option v-for="(_, index) in pages" :key="`rebuild-page-${index + 1}`" :value="index + 1">
+                  第 {{ index + 1 }} 页
+                </option>
+              </select>
+            </label>
+            <button
+              type="button"
+              class="toolbar-button toolbar-button--ghost"
+              :disabled="rebuildBusy || !pages.length"
+              @click="rebuildSelectedPageHtml"
+            >
+              {{ rebuildBusy ? '提交中...' : '重建所选页 HTML' }}
+            </button>
+            <button
+              type="button"
+              class="toolbar-button"
+              :disabled="rebuildBusy || !hasFailedPages"
+              @click="rebuildFailedPagesHtml"
+            >
+              {{ rebuildBusy ? '提交中...' : '仅重建失败页' }}
+            </button>
+          </section>
           <button
             v-if="failedNextPageIndex !== null"
             type="button"
@@ -635,12 +784,11 @@ onUnmounted(() => {
           </nav>
 
           <SlidesDeckRuntime
-            v-if="pages.length"
+            v-if="isPlaybackReady"
             :pages="pages"
             :current-index="currentSlideIndex"
             @update:current-index="handleRuntimeSlideChange"
           />
-          <section v-else class="slides-empty">暂无可播放页面。</section>
         </section>
 
         <aside class="slides-notes">
@@ -810,6 +958,50 @@ onUnmounted(() => {
   padding: 0.5rem 0.7rem;
 }
 
+.slides-rebuild-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) auto auto auto;
+  gap: 0.65rem;
+  align-items: end;
+  margin-bottom: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid #e2d8c5;
+  border-radius: 0.85rem;
+  background: linear-gradient(180deg, #fffaf1 0%, #fff6e7 100%);
+}
+
+.slides-rebuild-controls__copy {
+  min-width: 0;
+}
+
+.slides-rebuild-controls__title {
+  margin: 0;
+  font-weight: 700;
+  color: #6e4417;
+}
+
+.slides-rebuild-controls__meta {
+  margin: 0.2rem 0 0;
+  color: #6a7483;
+  font-size: 0.88rem;
+}
+
+.slides-rebuild-controls__field {
+  display: grid;
+  gap: 0.25rem;
+  color: #5c6878;
+  font-size: 0.88rem;
+}
+
+.slides-rebuild-controls__field select {
+  min-width: 112px;
+  border: 1px solid #d5c5a8;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: #3f4956;
+  padding: 0.45rem 0.65rem;
+}
+
 .slides-page-nav {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -955,6 +1147,11 @@ onUnmounted(() => {
 
   .slides-player-bar {
     grid-template-columns: 1fr;
+  }
+
+  .slides-rebuild-controls {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 }
 </style>

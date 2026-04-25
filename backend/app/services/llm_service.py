@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+from collections.abc import Callable
 from collections.abc import Sequence
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -316,24 +317,103 @@ def generate_slide_scene_spec(
     }
 
 
+def _normalize_batch_html_page(page: dict[str, Any], index: int) -> dict[str, Any]:
+    if not isinstance(page.get("page_id"), str) or not str(page.get("page_id", "")).strip():
+        raise ValueError("batch html response missing page_id field")
+    if not isinstance(page.get("html"), str) or not isinstance(page.get("css"), str):
+        raise ValueError("batch html response missing html/css fields")
+    if not isinstance(page.get("render_meta"), dict):
+        raise ValueError("batch html response missing render_meta field")
+    return {
+        "page_id": str(page["page_id"]).strip() or f"page-{index}",
+        "html": page["html"].strip(),
+        "css": page["css"].strip(),
+        "render_meta": page["render_meta"],
+    }
+
+
+
+def generate_slide_html_bundle(
+    scene_specs: list[dict[str, Any]],
+    *,
+    deck_style_guide: dict[str, Any] | None = None,
+    deck_digest: dict[str, Any] | None = None,
+    deck_meta: dict[str, Any] | None = None,
+    model_caller: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    canvas_width = settings.slides_html_canvas_width
+    canvas_height = settings.slides_html_canvas_height
+    raw = _call_slides_json_model(
+        task_name="html",
+        system_prompt=(
+            "你负责一次性渲染整套多页 HTML 演示稿。只返回 JSON，顶层必须包含 deck_meta 和 pages。"
+            "pages 必须是逐页数组；不要返回长文档，不要把整套内容拼成一个连续页面。"
+            "pages 数组中的每一页都必须是完整的 page-level HTML payload，且必须同时包含 page_id、html、css、render_meta 四个字段。"
+            "每一页都必须直接返回可渲染的 html 和 css，不要返回 layout、elements、safe_area、outline、component plan 等中间设计稿字段来替代 html/css。"
+            f"每一页都必须严格输出 1 张固定 {canvas_width}px × {canvas_height}px 的单页画布，比例严格为 16:9。"
+            f"每一页的 html、body 和根画布容器都必须显式声明 width: {canvas_width}px; height: {canvas_height}px; margin: 0; padding: 0; overflow: hidden;。"
+            "禁止使用 min-height: 100vh、height: auto、内容撑高页面、纵向堆叠无限增长、响应式长文布局。"
+            "禁止 body 滚动、根容器滚动、内部容器滚动；首屏渲染时页面必须完整落入固定画布内。"
+            "所有重要内容必须控制在安全区内：左右至少 80px，上方至少 64px，下方至少 56px。"
+            "你需要直接输出最终可渲染 HTML，不要输出 placeholder、资产占位说明、Markdown 源标记或公式源码。"
+            "如果 scene_specs 中存在 asset_bindings 或可复用视觉资产，应优先将其落成真实视觉结构，例如 <img>、<svg>、<table> 或其他最终 DOM。"
+            "不得输出 placeholder、[图表占位]、[图片占位]、待补图片 等占位内容来替代真实视觉结构。"
+            "Markdown 语法必须渲染成最终 HTML；公式必须渲染成最终可展示结构，不得直接输出 `$...$`、`$$...$$` 或未展开的 markdown 标记。"
+            "除非 scene_specs 确实没有更丰富的内容，否则不要退化为 title+paragraph 式兜底布局。"
+            "同一套 deck 的标题层级、正文密度、间距、引用样式必须统一。"
+        ),
+        user_payload={
+            "scene_specs": scene_specs,
+            "deck_style_guide": deck_style_guide or {},
+            "deck_digest": deck_digest or {},
+            "deck_meta": deck_meta or {},
+        },
+        model_caller=model_caller,
+    )
+    pages = raw.get("pages") if isinstance(raw.get("pages"), list) else []
+    return {
+        "deck_meta": raw.get("deck_meta") if isinstance(raw.get("deck_meta"), dict) else {},
+        "pages": [
+            _normalize_batch_html_page(page, index)
+            for index, page in enumerate(pages, start=1)
+            if isinstance(page, dict)
+        ],
+    }
+
+
 def generate_slide_html_page(
     scene_spec: dict[str, Any],
     *,
     deck_style_guide: dict[str, Any] | None = None,
     model_caller: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    canvas_width = settings.slides_html_canvas_width
+    canvas_height = settings.slides_html_canvas_height
     raw = _call_slides_json_model(
         task_name="html",
         system_prompt=(
             "你负责渲染单页 16:9 HTML 演示页。只返回 JSON，必须包含 html、css、render_meta。"
-            "HTML 中所有可见文字都必须使用中文（中文）。"
+            "HTML 中所有可见文字都必须使用中文。"
+            "这不是网页，不是文章，不是长文档，而是一张固定像素的演示幻灯片。"
+            f"你必须严格输出 1 张固定 {canvas_width}px × {canvas_height}px 的单页画布，比例严格为 16:9。"
+            f"html、body 和根画布容器都必须显式声明 width: {canvas_width}px; height: {canvas_height}px; margin: 0; padding: 0; overflow: hidden;。"
+            "禁止使用 min-height: 100vh、height: auto、内容撑高页面、纵向堆叠无限增长、响应式长文布局。"
+            "禁止 body 滚动、根容器滚动、内部容器滚动；首屏渲染时页面必须完整落入固定画布内。"
+            "所有重要内容必须控制在安全区内：左右至少 80px，上方至少 64px，下方至少 56px。"
+            "标题最多 2 行；导语最多 3 行；单个文本块最多 6 行；页面最多 3 个主要文本区域和 1 个主要视觉区域。"
+            "如果内容过多，必须主动提炼、压缩、分组，而不是让容器变高或出现滚动条。"
             "除非 scene_spec 确实没有更丰富的内容，否则不要退化为 title+paragraph 式兜底布局。"
-            "你需要把 content_blocks 展开成有层次、有重点、有视觉焦点的单页演示结构，"
-            "在可用时应体现图表或资产绑定。"
+            "你需要把 content_blocks 展开成有层次、有重点、有视觉焦点的单页演示结构，在可用时应体现图表或资产绑定。"
             "优秀示例：结果页应至少包含标题区、指标/对比区、证据标注区；方法页应至少包含结构说明区和重点解释区，而不是只放一段文字。"
+            "优秀页面必须同时满足：固定画布、无滚动、结构清晰、视觉平衡、主题统一。"
             "同一份 deck 内所有页面必须遵守同一套 deck_style_guide，保证主题、字体、颜色、间距和引用样式一致。"
+            "如果提供了 deck_meta，你必须复用其中的 typography、spacing、tone、component rules，不得重新发明另一套风格。"
         ),
-        user_payload={"scene_spec": scene_spec, "deck_style_guide": deck_style_guide or {}},
+        user_payload={
+            "scene_spec": scene_spec,
+            "deck_style_guide": deck_style_guide or {},
+            "deck_meta": (deck_style_guide or {}).get("deck_meta", {}),
+        },
         model_caller=model_caller,
     )
     return {

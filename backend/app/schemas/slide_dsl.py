@@ -159,9 +159,41 @@ class RuntimeRenderedPage(BaseModel):
     render_meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class SlidesRuntimeBundleValidationSummary(BaseModel):
+    status: Literal["not_ready", "partial_ready", "ready"] = "not_ready"
+    page_count: int = 0
+    playable_page_count: int = 0
+    failed_page_numbers: list[int] = Field(default_factory=list)
+
+
 class SlidesRuntimeBundle(BaseModel):
     page_count: int = 0
     pages: list[RuntimeRenderedPage] = Field(default_factory=list)
+    playable_page_count: int = 0
+    failed_page_numbers: list[int] = Field(default_factory=list)
+    validation_summary: SlidesRuntimeBundleValidationSummary = Field(
+        default_factory=SlidesRuntimeBundleValidationSummary
+    )
+    deck_meta: dict[str, Any] = Field(default_factory=dict)
+    generation_meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssetSlidesRebuildMeta(BaseModel):
+    from_stage: Literal["full", "scene", "html", "runtime"] = "full"
+    requested_page_numbers: list[int] = Field(default_factory=list)
+    effective_page_numbers: list[int] = Field(default_factory=list)
+    failed_only: bool = False
+    reused_layers: list[str] = Field(default_factory=list)
+    rebuilt_layers: list[str] = Field(default_factory=list)
+
+
+class AssetSlidesRebuildRequest(BaseModel):
+    from_stage: Literal["full", "scene", "html", "runtime"] = "full"
+    page_numbers: list[int] = Field(default_factory=list)
+    failed_only: bool = False
+    reuse_analysis_pack: bool = True
+    reuse_presentation_plan: bool = True
+    debug_target: Literal["analysis", "plan", "scene", "html", "full"] = "full"
 
 
 class AssetSlidesResponse(BaseModel):
@@ -170,6 +202,7 @@ class AssetSlidesResponse(BaseModel):
     schema_version: str | None = None
     rebuilding: bool = False
     rebuild_reason: str | None = None
+    rebuild_meta: AssetSlidesRebuildMeta | None = None
     tts_status: Literal[
         "not_generated",
         "processing",
@@ -177,8 +210,10 @@ class AssetSlidesResponse(BaseModel):
         "failed",
         "partial",
     ] = "not_generated"
-    playback_status: Literal["not_ready", "ready"] = "not_ready"
+    playback_status: Literal["not_ready", "partial_ready", "ready"] = "not_ready"
     auto_page_supported: bool = False
+    playable_page_count: int = 0
+    failed_page_numbers: list[int] = Field(default_factory=list)
     slides_dsl: SlidesDslPayload | None = None
     runtime_bundle: SlidesRuntimeBundle | None = None
     must_pass_report: MustPassReport | None = None

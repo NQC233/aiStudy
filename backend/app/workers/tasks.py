@@ -23,6 +23,7 @@ from app.services.retrieval_service import (
     enqueue_asset_chunk_rebuild,
     run_asset_kb_pipeline,
 )
+from app.services.slide_generation_v2_service import generate_asset_slides_runtime_bundle
 from app.services.slide_tts_service import run_asset_slide_tts_pipeline
 from app.workers.celery_app import celery_app
 
@@ -160,6 +161,30 @@ def _mark_tts_retry_pending(
             presentation.tts_manifest = manifest_payload
             db.commit()
             return
+    finally:
+        db.close()
+
+
+def _mark_slides_generation_failed(asset_id: str, error_message: str) -> None:
+    db = SessionLocal()
+    try:
+        asset = db.get(Asset, asset_id)
+        presentation = db.scalars(
+            select(Presentation)
+            .where(Presentation.asset_id == asset_id)
+            .with_for_update()
+        ).first()
+        if asset is not None:
+            asset.slides_status = "failed"
+        if presentation is not None:
+            error_meta = presentation.error_meta if isinstance(presentation.error_meta, dict) else {}
+            presentation.status = "failed"
+            presentation.active_run_token = None
+            presentation.error_meta = {
+                **error_meta,
+                "worker_failure": {"message": error_message[:500]},
+            }
+        db.commit()
     finally:
         db.close()
 
@@ -347,6 +372,41 @@ def enqueue_generate_asset_slide_tts(
             slide_key,
             exc_info=exc,
         )
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name="app.workers.tasks.enqueue_generate_asset_slides_runtime_bundle")
+def enqueue_generate_asset_slides_runtime_bundle(
+    self: Task,
+    asset_id: str,
+    *,
+    from_stage: str = "full",
+    page_numbers: list[int] | None = None,
+    failed_only: bool = False,
+    reuse_analysis_pack: bool = True,
+    reuse_presentation_plan: bool = True,
+    debug_target: str = "full",
+) -> dict[str, object]:
+    """执行资产 slides runtime bundle 生成任务。"""
+    db = SessionLocal()
+    try:
+        return generate_asset_slides_runtime_bundle(
+            db,
+            asset_id=asset_id,
+            from_stage=from_stage,
+            page_numbers=page_numbers,
+            failed_only=failed_only,
+            reuse_analysis_pack=reuse_analysis_pack,
+            reuse_presentation_plan=reuse_presentation_plan,
+            debug_target=debug_target,
+        )
+    except Retry:
+        raise
+    except Exception as exc:  # pragma: no cover - Celery 任务需要把异常继续抛出给 Worker
+        _mark_slides_generation_failed(asset_id, str(exc))
+        logger.exception("Slides 任务执行失败: asset_id=%s", asset_id, exc_info=exc)
         raise
     finally:
         db.close()

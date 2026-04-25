@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx ctx7@latest library \"@playwright/test\" \"How do I write a Playwright test that mocks API responses with page.route and verifies page UI for a partially ready playback state?\")"
+    ]
+  }
+}

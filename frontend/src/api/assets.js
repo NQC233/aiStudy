@@ -195,8 +195,8 @@ export function sendChatSessionMessage(sessionId, payload) {
 export function fetchAssetSlides(assetId) {
     return requestJson(`/api/assets/${assetId}/slides`);
 }
-export function rebuildAssetSlides(assetId) {
-    return postJson(`/api/assets/${assetId}/slides/runtime-bundle/rebuild`, {});
+export function rebuildAssetSlides(assetId, payload = {}) {
+    return postJson(`/api/assets/${assetId}/slides/runtime-bundle/rebuild`, payload);
 }
 export function ensureAssetSlideTts(assetId, payload) {
     return postJson(`/api/assets/${assetId}/slides/tts/ensure`, payload);

@@ -21,6 +21,71 @@ def _analysis_has_rich_coverage(analysis_pack: dict[str, object]) -> bool:
     return covered >= 4
 
 
+def _default_page_budget(scene_role: str, visual_strategy: str) -> dict[str, object]:
+    del scene_role
+    visual_heavy = visual_strategy in {
+        "text_plus_original_figure",
+        "comparison_with_original_table",
+    }
+    return {
+        "max_blocks": 2 if visual_heavy else 3,
+        "layout_budget": {
+            "visual_emphasis": "high" if visual_heavy else "medium",
+            "safe_area_padding": 72,
+        },
+        "content_budget": {
+            "title_max_chars": 28,
+            "summary_max_chars": 72,
+            "bullet_max_items": 4,
+            "bullet_max_chars": 44,
+            "evidence_max_chars": 90,
+        },
+        "priority_tiers": {
+            "must_keep": ["title", "summary_line"],
+            "trim_first": ["evidence", "secondary_bullets"],
+            "split_candidates": ["overflow_bullets", "overflow_evidence"],
+        },
+        "overflow_strategy": {
+            "mode": "trim_then_split",
+            "trim_order": ["evidence", "secondary_bullets", "speaker_note_seed"],
+            "split_threshold": "after_trim_if_still_over_budget",
+        },
+        "continuation_policy": {
+            "enabled": True,
+            "max_extra_pages": 3,
+            "title_suffix": "（续）",
+        },
+    }
+
+
+def _attach_page_budget(plan: dict[str, object]) -> dict[str, object]:
+    pages = plan.get("pages")
+    if not isinstance(pages, list):
+        return plan
+
+    enriched_pages: list[dict[str, object]] = []
+    for page in pages:
+        if not isinstance(page, dict):
+            enriched_pages.append(page)
+            continue
+        enriched_pages.append(
+            {
+                **page,
+                "page_budget": page.get("page_budget")
+                if isinstance(page.get("page_budget"), dict)
+                else _default_page_budget(
+                    str(page.get("scene_role", "overview")),
+                    str(page.get("visual_strategy", "text_only")),
+                ),
+            }
+        )
+
+    return {
+        **plan,
+        "pages": enriched_pages,
+    }
+
+
 def _validate_presentation_plan(
     plan: dict[str, object],
     analysis_pack: dict[str, object],
@@ -33,6 +98,14 @@ def _validate_presentation_plan(
         raise ValueError("presentation plan pages must be a list")
     if not pages:
         raise ValueError("presentation plan pages cannot be empty")
+    for page in pages:
+        if not isinstance(page, dict):
+            raise ValueError("presentation plan pages must contain dict items")
+        budget = page.get("page_budget")
+        if not isinstance(budget, dict):
+            raise ValueError("presentation plan page missing page_budget")
+        if int(budget.get("max_blocks", 0) or 0) <= 0:
+            raise ValueError("presentation plan page_budget.max_blocks must be positive")
     if _analysis_has_rich_coverage(analysis_pack) and visual_asset_catalog and len(pages) < 4:
         raise ValueError("presentation plan collapsed rich analysis into too few pages")
 
@@ -194,6 +267,7 @@ def build_presentation_plan(
             plan = generate_slides_presentation_plan(analysis_pack, visual_asset_catalog)
         else:
             plan = plan_writer(analysis_pack, visual_asset_catalog)
+        plan = _attach_page_budget(plan)
         raw_page_count = _plan_page_count(plan)
         _validate_presentation_plan(plan, analysis_pack, visual_asset_catalog)
         return _with_plan_debug(
@@ -205,7 +279,7 @@ def build_presentation_plan(
             validated_page_count=_plan_page_count(plan),
         )
     except Exception as exc:
-        fallback_plan = build_plan_fallback(analysis_pack, visual_asset_catalog)
+        fallback_plan = _attach_page_budget(build_plan_fallback(analysis_pack, visual_asset_catalog))
         _validate_presentation_plan(fallback_plan, analysis_pack, visual_asset_catalog)
         return _with_plan_debug(
             fallback_plan,

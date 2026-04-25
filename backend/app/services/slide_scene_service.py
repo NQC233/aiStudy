@@ -7,6 +7,17 @@ from typing import Any
 from app.services.llm_service import generate_slide_scene_spec
 
 
+def _scene_budget_fields(page: dict[str, object]) -> dict[str, object]:
+    page_budget = page.get("page_budget") if isinstance(page.get("page_budget"), dict) else {}
+    overflow_strategy = page_budget.get("overflow_strategy") if isinstance(page_budget, dict) else {}
+    continuation_policy = page_budget.get("continuation_policy") if isinstance(page_budget, dict) else {}
+    return {
+        "page_budget": page_budget,
+        "overflow_strategy": overflow_strategy if isinstance(overflow_strategy, dict) else {},
+        "continuation_policy": continuation_policy if isinstance(continuation_policy, dict) else {},
+    }
+
+
 def _default_scene_writer(page: dict[str, object]) -> dict[str, object]:
     narrative_goal = str(page.get("narrative_goal", "Paper Overview")).strip() or "Paper Overview"
     candidate_assets = page.get("candidate_assets")
@@ -26,6 +37,7 @@ def _default_scene_writer(page: dict[str, object]) -> dict[str, object]:
         "asset_bindings": asset_bindings,
         "animation_plan": {"type": page.get("animation_intent", "soft_intro")},
         "speaker_note_seed": narrative_goal,
+        **_scene_budget_fields(page),
         "_debug": {
             "scene_source": "fallback",
             "is_empty_scene": True,
@@ -97,7 +109,7 @@ def build_scene_specs(
     def build_one(page: dict[str, object]) -> dict[str, object]:
         try:
             if scene_generator is not None:
-                return _annotate_scene_debug(
+                scene = _annotate_scene_debug(
                     _call_scene_generator(
                         scene_generator,
                         page,
@@ -107,8 +119,12 @@ def build_scene_specs(
                     ),
                     scene_source="generated",
                 )
+                return {
+                    **scene,
+                    **_scene_budget_fields(page),
+                }
             if scene_writer is _default_scene_writer:
-                return _annotate_scene_debug(
+                scene = _annotate_scene_debug(
                     generate_slide_scene_spec(
                         page,
                         effective_analysis_pack,
@@ -117,7 +133,15 @@ def build_scene_specs(
                     ),
                     scene_source="generated",
                 )
-            return _annotate_scene_debug(scene_writer(page), scene_source="generated")
+                return {
+                    **scene,
+                    **_scene_budget_fields(page),
+                }
+            scene = _annotate_scene_debug(scene_writer(page), scene_source="generated")
+            return {
+                **scene,
+                **_scene_budget_fields(page),
+            }
         except Exception:
             return scene_writer(page)
 
