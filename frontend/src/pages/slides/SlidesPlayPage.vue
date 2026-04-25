@@ -602,28 +602,33 @@ onUnmounted(() => {
     <section class="slides-shell">
       <header class="slides-header">
         <div>
-          <p class="slides-kicker">Slides / Spec 12</p>
+          <p class="page-kicker">Slides / Presentation Stage</p>
           <h1>{{ asset?.title ?? '演示播放页' }}</h1>
-          <p class="slides-meta">
-            状态：{{ effectiveSlidesStatus }}
-            <span v-if="qualityScore !== null"> · 质量分：{{ qualityScore.toFixed(2) }}</span>
+          <div class="slides-meta-grid">
+            <span class="status-chip" :data-tone="isSlidesRebuilding ? 'processing' : (isSlidesReady ? 'ready' : 'muted')">
+              Slides {{ effectiveSlidesStatus }}
+            </span>
+            <span class="status-chip" :data-tone="isPlaybackReady ? 'ready' : (errorMessage ? 'failed' : 'processing')">
+              Playback {{ slidesResponse?.playback_status ?? 'not_ready' }}
+            </span>
+            <span class="status-chip" :data-tone="currentManifestItem?.status === 'failed' ? 'failed' : (currentManifestItem?.status === 'ready' ? 'ready' : 'processing')">
+              TTS {{ currentManifestItem?.status ?? (slidesResponse?.tts_status ?? 'not_generated') }}
+            </span>
+          </div>
+          <p class="slides-meta" v-if="qualityScore !== null">
+            质量分 {{ qualityScore.toFixed(2) }}
+            <span v-if="generationMeta"> · {{ generationMeta.requested_strategy }} → {{ generationMeta.applied_strategy }}</span>
           </p>
-          <p class="slides-meta">
-            TTS：{{ slidesResponse?.tts_status ?? 'not_generated' }}
-            <span> · Playback：{{ slidesResponse?.playback_status ?? 'not_ready' }}</span>
+          <p v-if="generationMeta?.fallback_used" class="slides-meta">
+            已回退：{{ generationMeta.fallback_reason || 'unknown' }}
           </p>
-          <p v-if="generationMeta && isSlidesReady" class="slides-meta">
-            策略：{{ generationMeta.requested_strategy }} → {{ generationMeta.applied_strategy }}
-            <span v-if="generationMeta.fallback_used"> · 已回退（{{ generationMeta.fallback_reason || 'unknown' }}）</span>
-          </p>
-          <p v-else-if="!isSlidesReady" class="slides-meta">策略结果更新中，请等待当前生成完成。</p>
           <p v-if="shadowReport && isSlidesReady" class="slides-meta">
             Shadow：{{ shadowReport.status }}
             <span v-if="shadowReport.score_delta !== null"> · Δ{{ shadowReport.score_delta.toFixed(2) }}</span>
             <span v-else-if="shadowReport.skip_reason"> · {{ shadowReport.skip_reason }}</span>
           </p>
         </div>
-        <RouterLink :to="`/workspace/${assetId}`" class="slides-back">
+        <RouterLink :to="`/workspace/${assetId}`" class="workspace-back slides-back">
           返回工作区
         </RouterLink>
       </header>
@@ -631,6 +636,7 @@ onUnmounted(() => {
       <section v-if="loading" class="slides-empty">
         正在加载演示内容...
       </section>
+
       <section v-else-if="errorMessage" class="slides-empty slides-empty--error">
         <p class="slides-error-message">{{ errorMessage }}</p>
         <div class="slides-error-actions">
@@ -638,13 +644,13 @@ onUnmounted(() => {
             返回工作区
           </button>
           <button type="button" class="toolbar-button" @click="recoverSlidesAndBack">
-            返回工作区
+            返回工作区并处理
           </button>
         </div>
       </section>
 
       <section v-else-if="!isPlaybackReady" class="slides-empty">
-        <p>{{ playbackMessage || '当前演示内容尚未就绪，请返回工作区重建或重试。' }}</p>
+        <p class="slides-error-message">{{ playbackMessage || '当前演示内容尚未就绪，请返回工作区重建或重试。' }}</p>
         <section v-if="hasRuntimeBundle && pages.length" class="slides-rebuild-controls" aria-label="HTML 重建控制">
           <div class="slides-rebuild-controls__copy">
             <p class="slides-rebuild-controls__title">HTML 重建</p>
@@ -727,6 +733,7 @@ onUnmounted(() => {
           </section>
 
           <p v-if="playbackMessage" class="slides-playback-message">{{ playbackMessage }}</p>
+
           <section class="slides-rebuild-controls" aria-label="HTML 重建控制">
             <div class="slides-rebuild-controls__copy">
               <p class="slides-rebuild-controls__title">HTML 重建</p>
@@ -759,6 +766,7 @@ onUnmounted(() => {
               {{ rebuildBusy ? '提交中...' : '仅重建失败页' }}
             </button>
           </section>
+
           <button
             v-if="failedNextPageIndex !== null"
             type="button"
@@ -783,375 +791,37 @@ onUnmounted(() => {
             </button>
           </nav>
 
-          <SlidesDeckRuntime
-            v-if="isPlaybackReady"
-            :pages="pages"
-            :current-index="currentSlideIndex"
-            @update:current-index="handleRuntimeSlideChange"
-          />
+          <div class="slides-stage-card">
+            <SlidesDeckRuntime
+              v-if="isPlaybackReady"
+              :pages="pages"
+              :current-index="currentSlideIndex"
+              @update:current-index="handleRuntimeSlideChange"
+            />
+          </div>
         </section>
 
         <aside class="slides-notes">
-          <header>
-            <p class="slides-kicker">Speaker Notes</p>
-            <h2>{{ currentPage?.page_id ?? '未选中页面' }}</h2>
-          </header>
+          <section class="slides-notes-card">
+            <header class="slides-notes__header">
+              <div>
+                <p class="page-kicker">Speaker Notes</p>
+                <h2>{{ currentPage?.page_id ?? '未选中页面' }}</h2>
+              </div>
+            </header>
 
-          <p class="slides-script">
-            {{ currentPage ? '当前 runtime 页面已就绪；讲稿与引用锚点待后续 runtime payload 接入。' : '切换页面后查看讲稿。' }}
-          </p>
-          <p class="slides-meta">
-            当前页音频：{{ currentManifestItem?.status ?? 'pending' }}
-          </p>
-          <p v-if="currentTtsRetryHint" class="slides-meta slides-meta--retry">{{ currentTtsRetryHint }}</p>
-
-          <p class="slides-citation-empty">当前 runtime 页面暂无引用锚点展示。</p>
+            <p class="slides-script">
+              {{ currentPage ? '当前 runtime 页面已就绪；讲稿与引用锚点待后续 runtime payload 接入。' : '切换页面后查看讲稿。' }}
+            </p>
+            <p class="slides-meta">
+              当前页音频：{{ currentManifestItem?.status ?? 'pending' }}
+            </p>
+            <p v-if="currentTtsRetryHint" class="slides-meta slides-meta--retry">{{ currentTtsRetryHint }}</p>
+            <p class="slides-citation-empty">当前 runtime 页面暂无引用锚点展示。</p>
+          </section>
         </aside>
       </section>
     </section>
   </main>
 </template>
 
-<style scoped>
-.slides-page {
-  min-height: 100vh;
-  padding: 1.25rem;
-  background: radial-gradient(circle at 0% 0%, #f6f0df 0%, #f2efe8 30%, #ebe9e1 100%);
-  font-family: 'Avenir Next', 'Segoe UI', sans-serif;
-  color: #1f2730;
-}
-
-.slides-shell {
-  max-width: 1380px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.slides-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: flex-start;
-}
-
-.slides-kicker {
-  margin: 0;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: #965d17;
-}
-
-.slides-header h1 {
-  margin: 0.35rem 0;
-  font-family: 'Iowan Old Style', 'Palatino Linotype', serif;
-  font-size: 2rem;
-}
-
-.slides-meta {
-  margin: 0;
-  color: #4d5b6b;
-}
-
-.slides-meta--retry {
-  color: #7b3f00;
-}
-
-.slides-back {
-  text-decoration: none;
-  color: #fff;
-  background: linear-gradient(135deg, #9a5f17, #6d4010);
-  padding: 0.65rem 0.95rem;
-  border-radius: 0.75rem;
-}
-
-.slides-empty {
-  background: #fff;
-  border-radius: 1rem;
-  padding: 1.25rem;
-}
-
-.slides-empty--error {
-  background: #fbe9e9;
-  color: #8a1f1f;
-}
-
-.slides-error-message {
-  margin: 0;
-}
-
-.slides-error-actions {
-  margin-top: 0.85rem;
-  display: flex;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-}
-
-.slides-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 1rem;
-}
-
-.slides-stage,
-.slides-notes {
-  background: #fff;
-  border-radius: 1rem;
-  border: 1px solid #d9d7cf;
-  padding: 1rem;
-}
-
-.slides-stage__toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.85rem;
-}
-
-.slides-stage__counter {
-  margin: 0;
-  color: #556274;
-  font-weight: 600;
-}
-
-.slides-stage__hint {
-  margin: 0 0 0.7rem;
-  color: #687586;
-  font-size: 0.88rem;
-}
-
-.slides-player-bar {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
-  gap: 0.65rem;
-  align-items: center;
-  margin-bottom: 0.75rem;
-}
-
-.slides-player-bar__auto {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  color: #5c6878;
-  font-size: 0.88rem;
-}
-
-.slides-player-bar__range {
-  width: 100%;
-}
-
-.slides-player-bar__time {
-  color: #5c6878;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.82rem;
-}
-
-.slides-playback-message {
-  margin: 0 0 0.75rem;
-  color: #7b3f00;
-  background: #fff3e2;
-  border: 1px solid #e5c99f;
-  border-radius: 0.7rem;
-  padding: 0.5rem 0.7rem;
-}
-
-.slides-rebuild-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) auto auto auto;
-  gap: 0.65rem;
-  align-items: end;
-  margin-bottom: 0.75rem;
-  padding: 0.8rem;
-  border: 1px solid #e2d8c5;
-  border-radius: 0.85rem;
-  background: linear-gradient(180deg, #fffaf1 0%, #fff6e7 100%);
-}
-
-.slides-rebuild-controls__copy {
-  min-width: 0;
-}
-
-.slides-rebuild-controls__title {
-  margin: 0;
-  font-weight: 700;
-  color: #6e4417;
-}
-
-.slides-rebuild-controls__meta {
-  margin: 0.2rem 0 0;
-  color: #6a7483;
-  font-size: 0.88rem;
-}
-
-.slides-rebuild-controls__field {
-  display: grid;
-  gap: 0.25rem;
-  color: #5c6878;
-  font-size: 0.88rem;
-}
-
-.slides-rebuild-controls__field select {
-  min-width: 112px;
-  border: 1px solid #d5c5a8;
-  border-radius: 0.65rem;
-  background: #fff;
-  color: #3f4956;
-  padding: 0.45rem 0.65rem;
-}
-
-.slides-page-nav {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 0.5rem;
-  margin-bottom: 0.85rem;
-}
-
-.slides-page-nav__item {
-  border: 1px solid #dccfb6;
-  border-radius: 0.7rem;
-  background: #fff9ef;
-  color: #61401c;
-  padding: 0.5rem 0.6rem;
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  text-align: left;
-  cursor: pointer;
-}
-
-.slides-page-nav__item:hover {
-  border-color: #ba8a4d;
-  background: #fff4df;
-}
-
-.slides-page-nav__item--active {
-  border-color: #8e5a22;
-  background: #f6e7cf;
-}
-
-.slides-page-nav__index {
-  width: 1.45rem;
-  height: 1.45rem;
-  border-radius: 50%;
-  background: #e9d5b4;
-  color: #6e4417;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.slides-page-nav__title {
-  font-size: 0.88rem;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.toolbar-button {
-  border: 1px solid #ab7c44;
-  border-radius: 0.7rem;
-  background: linear-gradient(135deg, #9a5f17, #6d4010);
-  color: #fff;
-  padding: 0.42rem 0.85rem;
-  cursor: pointer;
-}
-
-.toolbar-button--ghost {
-  background: #fff9ef;
-  color: #7a4d1f;
-}
-
-.toolbar-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.slides-section h2 {
-  margin-top: 0;
-  font-family: 'Iowan Old Style', 'Palatino Linotype', serif;
-  color: #7a4310;
-}
-
-.slides-goal {
-  font-weight: 600;
-}
-
-.slides-key-points {
-  margin: 0 0 0.7rem;
-  padding-left: 1.2rem;
-  display: grid;
-  gap: 0.3rem;
-  color: #2f3a4a;
-}
-
-.slides-section__active-cue {
-  background: #fff4df;
-  border-left: 3px solid #b26f24;
-  padding-left: 0.55rem;
-}
-
-.slides-evidence {
-  opacity: 0.86;
-}
-
-.slides-script {
-  margin: 0.75rem 0;
-  line-height: 1.5;
-}
-
-.slides-citations {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-.slides-citation-button {
-  width: 100%;
-  border: 1px solid #d8d1c3;
-  border-radius: 0.8rem;
-  padding: 0.65rem;
-  background: #fff8ec;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  cursor: pointer;
-}
-
-.slides-citation-button:hover {
-  border-color: #b1762f;
-  background: #fff1dc;
-}
-
-.slides-citation-empty {
-  color: #6a7483;
-}
-
-@media (max-width: 980px) {
-  .slides-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .slides-header {
-    flex-direction: column;
-  }
-
-  .slides-player-bar {
-    grid-template-columns: 1fr;
-  }
-
-  .slides-rebuild-controls {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-}
-</style>
