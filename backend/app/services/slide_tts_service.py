@@ -17,6 +17,7 @@ from app.schemas.slide_dsl import (
     SlidesDslPayload,
     SlideTtsManifest,
 )
+from app.services.asset_service import require_user_asset
 from app.services.oss_service import build_slide_tts_audio_key, upload_bytes
 from app.services.slide_playback_service import (
     build_tts_manifest_placeholders,
@@ -142,10 +143,11 @@ def _manifest_for_presentation(presentation: Presentation) -> SlideTtsManifest:
 def ensure_asset_slide_tts(
     db: Session,
     asset_id: str,
+    user_id: str,
     page_index: int,
     prefetch_next: bool = True,
 ) -> AssetSlideTtsEnsureResponse:
-    _require_asset(db, asset_id)
+    require_user_asset(db, asset_id, user_id)
     presentation = _load_presentation_with_slides(db, asset_id)
     slides_dsl = SlidesDslPayload.model_validate(presentation.slides_dsl)
     manifest = _manifest_for_presentation(presentation)
@@ -181,9 +183,10 @@ def ensure_asset_slide_tts(
 def retry_next_asset_slide_tts(
     db: Session,
     asset_id: str,
+    user_id: str,
     current_page_index: int,
 ) -> AssetSlideTtsRetryNextResponse:
-    _require_asset(db, asset_id)
+    require_user_asset(db, asset_id, user_id)
     presentation = _load_presentation_with_slides(db, asset_id)
     slides_dsl = SlidesDslPayload.model_validate(presentation.slides_dsl)
     manifest = _manifest_for_presentation(presentation)

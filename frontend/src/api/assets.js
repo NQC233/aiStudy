@@ -1,7 +1,16 @@
+import { getAuthorizationHeaderValue } from '@/api/auth';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 180000;
 const PARSED_JSON_REQUEST_TIMEOUT_MS = 30000;
+function mergeHeaders(headers) {
+    const merged = new Headers(headers);
+    const authorization = getAuthorizationHeaderValue();
+    if (authorization) {
+        merged.set('Authorization', authorization);
+    }
+    return merged;
+}
 async function requestWithTimeout(input, init, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
@@ -10,6 +19,7 @@ async function requestWithTimeout(input, init, timeoutMs = DEFAULT_REQUEST_TIMEO
     try {
         return await fetch(input, {
             ...init,
+            headers: mergeHeaders(init?.headers),
             signal: controller.signal,
         });
     }
@@ -100,6 +110,9 @@ export function fetchAssetPdfMeta(assetId) {
 }
 export function getAssetPdfUrl(assetId) {
     return `${API_BASE_URL}/api/assets/${assetId}/pdf`;
+}
+export function getAssetPdfAuthorizationHeader() {
+    return getAuthorizationHeaderValue();
 }
 export function fetchAssetParseStatus(assetId) {
     return requestJson(`/api/assets/${assetId}/status`);

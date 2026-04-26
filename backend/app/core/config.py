@@ -96,6 +96,14 @@ class Settings(BaseSettings):
     qa_answer_max_tokens: int = 70
     kb_chunk_target_chars: int = 1200
     kb_chunk_max_chars: int = 1600
+    auth_jwt_secret: str = "change-me-in-env"
+    auth_access_token_expire_minutes: int = 60 * 24 * 7
+    auth_dev_bypass_enabled: bool = False
+    auth_default_account_enabled: bool = True
+    auth_default_account_id: str = "default-demo-user"
+    auth_default_account_email: str = "demo@example.com"
+    auth_default_account_name: str = "默认演示账户"
+    auth_default_account_password: str = "paper123456"
     local_dev_user_id: str = "local-dev-user"
     local_dev_user_email: str = "dev@paper-learning.local"
     local_dev_user_name: str = "本地开发用户"

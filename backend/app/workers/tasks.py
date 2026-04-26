@@ -205,7 +205,10 @@ def enqueue_parse_asset(self: Task, asset_id: str) -> dict[str, str]:
         )
         if document_parse.status == "succeeded":
             enqueue_generate_asset_mindmap.delay(asset_id)
-            _, should_enqueue = enqueue_asset_chunk_rebuild(db, asset_id)
+            asset = db.get(Asset, asset_id)
+            should_enqueue = False
+            if asset is not None:
+                _, should_enqueue = enqueue_asset_chunk_rebuild(db, asset_id, asset.user_id)
             if should_enqueue:
                 enqueue_build_asset_kb.delay(asset_id)
             return {

@@ -5,6 +5,7 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'katex/dist/katex.min.css';
 
 import type { ParsedDocumentBlock, ParsedDocumentPayload } from '@/api/assets';
+import { getAssetPdfAuthorizationHeader } from '@/api/assets';
 import { renderMarkdownToSafeHtml } from '@/utils/markdown';
 import { normalizeBlockDisplayText } from '@/utils/text';
 
@@ -181,9 +182,11 @@ async function openDocument() {
   }, 25000);
 
   try {
+    const authorization = getAssetPdfAuthorizationHeader();
     const task = getDocument({
       url: props.pdfUrl,
       withCredentials: false,
+      httpHeaders: authorization ? { Authorization: authorization } : undefined,
     });
 
     // PDF.js 的类实例包含私有字段，必须避免被 Vue reactive proxy 包装。

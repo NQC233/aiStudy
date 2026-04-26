@@ -23,6 +23,7 @@ from app.schemas.document_parse import (
     ParseProgress,
     ParseTaskSnapshot,
 )
+from app.services.asset_service import require_user_asset
 from app.services.mineru_service import (
     MinerUConfigurationError,
     MinerURequestError,
@@ -211,12 +212,10 @@ def to_document_parse_summary(document_parse: DocumentParse) -> DocumentParseSum
 
 
 def get_asset_parse_status(
-    db: Session, asset_id: str
-) -> AssetParseStatusResponse | None:
+    db: Session, asset_id: str, user_id: str
+) -> AssetParseStatusResponse:
     """返回资产的最新解析状态。"""
-    asset = db.get(Asset, asset_id)
-    if asset is None:
-        return None
+    asset = require_user_asset(db, asset_id, user_id)
 
     latest_parse = _get_latest_parse(db, asset_id)
     return AssetParseStatusResponse(
@@ -228,13 +227,9 @@ def get_asset_parse_status(
     )
 
 
-def enqueue_asset_parse_retry(db: Session, asset_id: str) -> tuple[Asset, bool, str]:
+def enqueue_asset_parse_retry(db: Session, asset_id: str, user_id: str) -> tuple[Asset, bool, str]:
     """将资产重新推进到等待解析状态。"""
-    asset = db.get(Asset, asset_id)
-    if asset is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="未找到对应的学习资产。"
-        )
+    asset = require_user_asset(db, asset_id, user_id)
 
     original_pdf = _get_original_pdf_file(db, asset_id)
     if original_pdf is None:

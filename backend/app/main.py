@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.services.asset_service import seed_dev_user_and_assets
+from app.services.auth_bootstrap_service import ensure_default_account_and_migrate_legacy_data
 
 
 @asynccontextmanager
@@ -14,7 +14,7 @@ async def lifespan(_: FastAPI):
     """在应用启动时补齐单用户开发模式所需的测试数据。"""
     db = SessionLocal()
     try:
-        seed_dev_user_and_assets(db)
+        ensure_default_account_and_migrate_legacy_data(db, enabled=settings.auth_default_account_enabled)
         yield
     finally:
         db.close()

@@ -20,6 +20,7 @@ from app.schemas.slide_dsl import (
     SlideTtsManifest,
     SlidesDslPayload,
 )
+from app.services.asset_service import require_user_asset
 from app.services.slide_playback_service import (
     build_playback_plan_from_slides,
     build_tts_manifest_placeholders,
@@ -115,8 +116,8 @@ def _build_runtime_bundle_from_slides_dsl(
     )
 
 
-def get_asset_slides_snapshot(db: Session, asset_id: str) -> AssetSlidesResponse:
-    asset = _require_asset(db, asset_id)
+def get_asset_slides_snapshot(db: Session, asset_id: str, user_id: str) -> AssetSlidesResponse:
+    asset = require_user_asset(db, asset_id, user_id)
     presentation = db.scalars(
         select(Presentation).where(Presentation.asset_id == asset_id)
     ).first()

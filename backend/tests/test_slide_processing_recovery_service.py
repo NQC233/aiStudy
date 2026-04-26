@@ -31,7 +31,7 @@ class _FakeDb:
         return self._asset if asset_id == self._asset.id else None
 
     def scalars(self, _statement):  # noqa: ANN001
-        return _ScalarResult(self._presentation)
+        return _ScalarResult(self._presentation if self._presentation is not None else self._asset)
 
     def commit(self):
         self.commit_count += 1
@@ -43,38 +43,7 @@ class _FakeDb:
 class SlideProcessingRecoveryServiceTests(unittest.TestCase):
     def test_get_asset_slides_snapshot_does_not_recover_processing_within_extended_timeout(self) -> None:
         stale_at = datetime.now(UTC) - timedelta(minutes=10)
-        asset = SimpleNamespace(id="asset-1", slides_status="processing", updated_at=stale_at)
-        presentation = SimpleNamespace(
-            asset_id="asset-1",
-            status="processing",
-            slides_dsl=None,
-            runtime_bundle={"page_count": 0, "pages": []},
-            tts_manifest={},
-            playback_plan={},
-            dsl_quality_report={},
-            dsl_fix_logs=[],
-            error_meta={},
-            active_run_token="task-123",
-            updated_at=stale_at,
-        )
-        db = _FakeDb(asset, presentation)
-
-        with patch(
-            "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
-            1200,
-        ):
-            snapshot = get_asset_slides_snapshot(db, "asset-1")
-
-        self.assertEqual(snapshot.slides_status, "processing")
-        self.assertTrue(snapshot.rebuilding)
-        self.assertEqual(snapshot.rebuild_reason, "runtime_bundle_rebuild")
-        self.assertEqual(asset.slides_status, "processing")
-        self.assertEqual(presentation.status, "processing")
-        self.assertEqual(db.commit_count, 0)
-
-    def test_get_asset_slides_snapshot_does_not_recover_stale_processing_when_active_task_is_started(self) -> None:
-        stale_at = datetime.now(UTC) - timedelta(minutes=25)
-        asset = SimpleNamespace(id="asset-1", slides_status="processing", updated_at=stale_at)
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="processing", updated_at=stale_at)
         presentation = SimpleNamespace(
             asset_id="asset-1",
             status="processing",
@@ -92,6 +61,47 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
 
         with (
             patch(
+                "app.services.slide_dsl_service.require_user_asset",
+                return_value=asset,
+            ),
+            patch(
+                "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
+                1200,
+            ),
+        ):
+            snapshot = get_asset_slides_snapshot(db, "asset-1", "user-1")
+
+        self.assertEqual(snapshot.slides_status, "processing")
+        self.assertTrue(snapshot.rebuilding)
+        self.assertEqual(snapshot.rebuild_reason, "runtime_bundle_rebuild")
+        self.assertEqual(asset.slides_status, "processing")
+        self.assertEqual(presentation.status, "processing")
+        self.assertEqual(db.commit_count, 0)
+
+    def test_get_asset_slides_snapshot_does_not_recover_stale_processing_when_active_task_is_started(self) -> None:
+        stale_at = datetime.now(UTC) - timedelta(minutes=25)
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="processing", updated_at=stale_at)
+        presentation = SimpleNamespace(
+            asset_id="asset-1",
+            status="processing",
+            slides_dsl=None,
+            runtime_bundle={"page_count": 0, "pages": []},
+            tts_manifest={},
+            playback_plan={},
+            dsl_quality_report={},
+            dsl_fix_logs=[],
+            error_meta={},
+            active_run_token="task-123",
+            updated_at=stale_at,
+        )
+        db = _FakeDb(asset, presentation)
+
+        with (
+            patch(
+                "app.services.slide_dsl_service.require_user_asset",
+                return_value=asset,
+            ),
+            patch(
                 "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
                 1200,
             ),
@@ -100,7 +110,7 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
                 return_value="STARTED",
             ),
         ):
-            snapshot = get_asset_slides_snapshot(db, "asset-1")
+            snapshot = get_asset_slides_snapshot(db, "asset-1", "user-1")
 
         self.assertEqual(snapshot.slides_status, "processing")
         self.assertTrue(snapshot.rebuilding)
@@ -112,7 +122,7 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
 
     def test_get_asset_slides_snapshot_does_not_recover_stale_processing_when_active_task_is_success(self) -> None:
         stale_at = datetime.now(UTC) - timedelta(minutes=25)
-        asset = SimpleNamespace(id="asset-1", slides_status="processing", updated_at=stale_at)
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="processing", updated_at=stale_at)
         presentation = SimpleNamespace(
             asset_id="asset-1",
             status="processing",
@@ -130,6 +140,10 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
 
         with (
             patch(
+                "app.services.slide_dsl_service.require_user_asset",
+                return_value=asset,
+            ),
+            patch(
                 "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
                 1200,
             ),
@@ -138,7 +152,7 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
                 return_value="SUCCESS",
             ),
         ):
-            snapshot = get_asset_slides_snapshot(db, "asset-1")
+            snapshot = get_asset_slides_snapshot(db, "asset-1", "user-1")
 
         self.assertEqual(snapshot.slides_status, "processing")
         self.assertTrue(snapshot.rebuilding)
@@ -150,7 +164,7 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
 
     def test_get_asset_slides_snapshot_recovers_stale_processing_status_without_active_task(self) -> None:
         stale_at = datetime.now(UTC) - timedelta(minutes=25)
-        asset = SimpleNamespace(id="asset-1", slides_status="processing", updated_at=stale_at)
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="processing", updated_at=stale_at)
         presentation = SimpleNamespace(
             asset_id="asset-1",
             status="processing",
@@ -166,11 +180,17 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
         )
         db = _FakeDb(asset, presentation)
 
-        with patch(
-            "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
-            1200,
+        with (
+            patch(
+                "app.services.slide_dsl_service.require_user_asset",
+                return_value=asset,
+            ),
+            patch(
+                "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
+                1200,
+            ),
         ):
-            snapshot = get_asset_slides_snapshot(db, "asset-1")
+            snapshot = get_asset_slides_snapshot(db, "asset-1", "user-1")
 
         self.assertEqual(snapshot.slides_status, "failed")
         self.assertEqual(snapshot.rebuild_reason, "stale_processing_recovered")
@@ -214,11 +234,17 @@ class SlideProcessingRecoveryServiceTests(unittest.TestCase):
         )
         db = _FakeDb(asset, presentation)
 
-        with patch(
-            "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
-            1200,
+        with (
+            patch(
+                "app.services.asset_service.require_user_asset",
+                return_value=asset,
+            ),
+            patch(
+                "app.services.slide_processing_recovery_service.settings.slides_processing_stale_timeout_sec",
+                1200,
+            ),
         ):
-            detail = get_asset_detail(db, "asset-1")
+            detail = get_asset_detail(db, "asset-1", "user-1")
 
         self.assertIsNotNone(detail)
         self.assertEqual(detail.enhanced_resources.slides_status, "failed")

@@ -28,6 +28,17 @@ from app.services.slide_processing_recovery_service import (
 )
 
 
+def require_user_asset(db: Session, asset_id: str, user_id: str) -> Asset:
+    statement = select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id)
+    asset = db.scalars(statement).first()
+    if asset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="未找到对应的学习资产。",
+        )
+    return asset
+
+
 def _to_asset_detail(asset: Asset) -> AssetDetail:
     """将 ORM 模型转换为详情响应结构。"""
     return AssetDetail(
@@ -55,18 +66,16 @@ def _to_asset_detail(asset: Asset) -> AssetDetail:
     )
 
 
-def list_assets(db: Session) -> list[AssetListItem]:
+def list_assets(db: Session, user_id: str) -> list[AssetListItem]:
     """返回图书馆资产列表。"""
-    statement = select(Asset).order_by(Asset.created_at.desc())
+    statement = select(Asset).where(Asset.user_id == user_id).order_by(Asset.created_at.desc())
     assets = db.scalars(statement).all()
     return [AssetListItem.model_validate(asset) for asset in assets]
 
 
-def get_asset_detail(db: Session, asset_id: str) -> AssetDetail | None:
+def get_asset_detail(db: Session, asset_id: str, user_id: str) -> AssetDetail:
     """返回单个资产详情。"""
-    asset = db.get(Asset, asset_id)
-    if asset is None:
-        return None
+    asset = require_user_asset(db, asset_id, user_id)
 
     presentation = getattr(asset, "presentation", None)
     if presentation is None:
@@ -125,13 +134,8 @@ def collect_asset_storage_keys(asset: Asset) -> set[str]:
     return keys
 
 
-def delete_asset(db: Session, asset_id: str) -> AssetDeleteResponse:
-    asset = db.get(Asset, asset_id)
-    if asset is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="未找到对应的学习资产。",
-        )
+def delete_asset(db: Session, asset_id: str, user_id: str) -> AssetDeleteResponse:
+    asset = require_user_asset(db, asset_id, user_id)
 
     storage_keys = sorted(collect_asset_storage_keys(asset))
     deleted_oss_count = 0
@@ -170,8 +174,11 @@ def delete_asset(db: Session, asset_id: str) -> AssetDeleteResponse:
     )
 
 
-def seed_dev_user_and_assets(db: Session) -> None:
-    """在单用户开发模式下写入最小测试数据。"""
+def seed_dev_user_and_assets(db: Session, enabled: bool) -> bool:
+    """在显式开启开发旁路时写入最小测试数据。"""
+    if not enabled:
+        return False
+
     user = db.get(User, settings.local_dev_user_id)
     if user is None:
         user = User(
@@ -186,7 +193,7 @@ def seed_dev_user_and_assets(db: Session) -> None:
     asset_count = db.scalar(select(func.count()).select_from(Asset))
     if asset_count:
         db.commit()
-        return
+        return True
 
     demo_assets = [
         Asset(
@@ -244,3 +251,4 @@ def seed_dev_user_and_assets(db: Session) -> None:
 
     db.add_all(demo_files)
     db.commit()
+    return True

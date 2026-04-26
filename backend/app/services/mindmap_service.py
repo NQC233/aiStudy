@@ -23,6 +23,7 @@ from app.schemas.reader import (
     ParsedDocumentPayload,
     ParsedDocumentSection,
 )
+from app.services.asset_service import require_user_asset
 
 logger = logging.getLogger(__name__)
 
@@ -598,8 +599,8 @@ def _latest_succeeded_mindmap(db: Session, asset_id: str) -> Mindmap | None:
     return db.scalars(statement).first()
 
 
-def get_asset_mindmap(db: Session, asset_id: str) -> AssetMindmapResponse:
-    asset = _require_asset(db, asset_id)
+def get_asset_mindmap(db: Session, asset_id: str, user_id: str) -> AssetMindmapResponse:
+    asset = require_user_asset(db, asset_id, user_id)
     latest = _latest_mindmap(db, asset_id)
     if latest is None:
         return AssetMindmapResponse(
@@ -619,8 +620,8 @@ def get_asset_mindmap(db: Session, asset_id: str) -> AssetMindmapResponse:
     )
 
 
-def enqueue_asset_mindmap_rebuild(db: Session, asset_id: str) -> tuple[Asset, bool]:
-    asset = _require_asset(db, asset_id)
+def enqueue_asset_mindmap_rebuild(db: Session, asset_id: str, user_id: str) -> tuple[Asset, bool]:
+    asset = require_user_asset(db, asset_id, user_id)
     if asset.parse_status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
