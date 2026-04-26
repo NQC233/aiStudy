@@ -5,6 +5,8 @@ from app.services.asset_service import (
     list_assets,
     seed_dev_user_and_assets,
 )
+from app.services.auth_bootstrap_service import ensure_default_account_and_migrate_legacy_data
+from app.services.auth_service import login_user, register_user
 from app.services.chat_service import (
     create_asset_chat_session,
     create_chat_session_message,
@@ -88,6 +90,8 @@ __all__ = [
     "generate_asset_slides_runtime_bundle",
     "list_assets",
     "list_asset_notes",
+    "login_user",
+    "register_user",
     "run_parse_pipeline",
     "run_asset_mindmap_pipeline",
     "get_asset_slides_snapshot",
@@ -97,6 +101,7 @@ __all__ = [
     "run_asset_kb_pipeline",
     "search_asset_chunks",
     "seed_dev_user_and_assets",
+    "ensure_default_account_and_migrate_legacy_data",
     "create_asset_note",
     "update_note",
     "delete_note",

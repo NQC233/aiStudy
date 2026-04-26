@@ -13,6 +13,7 @@ from app.models.asset import Asset
 from app.models.presentation import Presentation
 from app.schemas.slide_generation_v2 import SlideGenerationArtifacts
 from app.services.asset_reader_service import get_asset_parsed_document
+from app.services.asset_service import require_user_asset
 from app.services.llm_service import describe_visual_asset
 from app.services.retrieval_service import search_asset_chunks
 from app.services.slide_analysis_service import build_asset_slide_analysis_pack
@@ -69,6 +70,7 @@ def enqueue_asset_slides_runtime_bundle_rebuild(
     db: Session,
     *,
     asset_id: str,
+    user_id: str,
     from_stage: str,
     page_numbers: list[int] | None,
     failed_only: bool,
@@ -85,7 +87,7 @@ def enqueue_asset_slides_runtime_bundle_rebuild(
             f"page_numbers is only supported for from_stage=scene|html, got {normalized_from_stage}"
         )
 
-    asset = _require_asset(db, asset_id)
+    asset = require_user_asset(db, asset_id, user_id)
     presentation = _get_or_create_presentation(db, asset_id)
     recover_stale_slides_processing(db, asset=asset, presentation=presentation)
 
@@ -134,7 +136,8 @@ def _collect_visual_assets(parsed_payload: dict[str, Any]) -> list[dict[str, obj
 
 
 def _default_parsed_payload_loader(db: Session, asset_id: str) -> dict[str, Any]:
-    parsed_document = get_asset_parsed_document(db, asset_id)
+    asset = _require_asset(db, asset_id)
+    parsed_document = get_asset_parsed_document(db, asset_id, asset.user_id)
     if parsed_document.parsed_json is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

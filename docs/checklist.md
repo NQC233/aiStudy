@@ -61,6 +61,7 @@
 - [x] Spec 15.2 已完成后端 ready/playback 门禁统一、page-level validation 接线、runtime bundle 快照汇总、前端播放页按页重建 / failed-only 入口与对应 E2E
 - [x] Slides 播放页已支持基于现有 HTML runtime 的 Fullscreen API 全屏预览，不再引入第二套渲染系统
 - [x] Spec 15.2 已完成阶段收尾，后续主线顺序确认为：Spec 16（前端整体体验优化）-> Spec 17（毕业设计收尾：页级 TTS 与自动翻页闭环）
+- [x] Spec 18 已立项为基础用户系统：首版采用“邮箱 + 密码 + Bearer Token”，历史 `local-dev-user` 资产默认保留、不自动迁移
 
 ## 3. 当前待确认事项
 
@@ -97,11 +98,75 @@
 - [x] Spec 15：Paper-to-Slides 主生成系统重构
 - [x] Spec 15.1：Slides HTML Runtime 与播放壳重构
 - [x] Spec 15.2：Slides Runtime 修复与调试成本治理
+- [x] Spec 18：基础用户系统（后端认证 / owner-check / 默认演示账户 / 前端登录注册闭环 / 默认账户邮箱修复与真实浏览器验收已完成，最小验收标准全部通过）
 
 ### 进行中
 
 - [ ] Spec 16：前端整体体验优化（Library + Workspace + SlidesPlay，视觉收口与前端 build 已完成，待真实手动链路验收）
 - [ ] Spec 17：毕业设计收尾（页级 TTS 与自动翻页闭环）
+
+### Spec 18 本轮启动记录（基础用户系统立项）
+
+- 完成内容：
+  - 已新增权威文档 `docs/specs/spec-18-basic-user-system.md`
+  - 已冻结首版用户系统边界：邮箱 + 密码登录、Bearer Token、统一 `current_user` 鉴权依赖、用户级数据隔离
+  - 已明确本轮不做 OAuth、邮箱验证、忘记密码、RBAC、多租户与历史资产自动迁移
+  - 已确认历史 `local-dev-user` 资产默认保留，不自动迁移给首个真实注册用户
+- 当前已知缺口：
+  - 后端主链路仍使用 `settings.local_dev_user_id` 作为请求身份来源
+  - 资产 / 问答 / 笔记 / Slides 多条读取链路尚未完成 owner-check 收口
+  - 前端仍无登录页、认证 store 与受保护路由
+- 下一轮建议：
+  - 先进入后端实现：补齐认证模型、auth API、token 校验与 `current_user` 依赖，再统一替换 `assets.py` 及相关服务中的固定用户注入
+  - 后端 owner-check 收口完成后，再接前端登录页、请求层 token 注入与路由守卫
+- 建议提交信息：
+  - `docs: add spec18 basic user system scope`
+
+### Spec 18 本轮追加记录（后端认证、默认演示账户与前端 auth 闭环已落地）
+
+- 完成内容：
+  - 后端认证主链路已落地：注册 / 登录 / me / logout
+  - 统一 `current_user` 鉴权依赖已接入，业务主路径不再以固定开发用户作为正式请求身份源
+  - 服务层 owner-check 已覆盖资产、阅读器、检索、问答、笔记、parse、mindmap、slides、TTS 等主要用户可见链路
+  - 启动阶段已接入默认演示账户 bootstrap：会确保 `demo@paper-learning.local` 存在，并将历史 `local-dev-user` 名下资产 / session / anchor / note 迁移到默认账户
+  - 前端已补齐 `frontend/src/api/auth.ts`、`frontend/src/stores/auth.ts`、`frontend/src/pages/auth/LoginPage.vue`、`frontend/src/pages/auth/RegisterPage.vue`
+  - 前端已补齐 token 持久化、`me` bootstrap、路由守卫、guest-only 登录/注册页与顶部退出登录入口
+  - 已新增并跑通 `frontend/tests/e2e/spec18-auth.spec.ts`，覆盖未登录跳转、登录回跳、注册后回跳
+  - 已完成一次真实浏览器走查，确认未登录访问 `/library` 会被拦到 `/login`，且登录页 / 注册页实际渲染正常
+  - 本轮重新运行 `backend.tests.test_slide_async_rebuild`、`backend.tests.test_slide_processing_recovery_service`、`backend.tests.test_slide_runtime_snapshot_service`，当前均已通过
+- 当前已知缺口：
+  - 还未完成“使用真实后端默认演示账户登录 -> 查看历史四资产 -> 进入 Workspace -> 进入 Slides -> 退出登录”的整条联调验收
+  - 当前浏览器走查主要验证了 auth 页面与受保护路由跳转，尚未覆盖带真实后端数据的 Library / Workspace / Slides 主链路
+  - README / `.env.example` 已补 auth 说明，但若本地 `/.env` 沿用旧值，需手动同步后再验证默认账户登录
+- 下一轮建议：
+  - 先用真实后端与默认演示账户补完整浏览器验收：`/library -> /workspace/:assetId -> /workspace/:assetId/slides -> logout`
+  - 验证默认账户是否确实能看到历史四资产；若数据库实际资产数或归属与预期不一致，再单独修 bootstrap / migration 策略
+- 建议提交信息：
+  - `feat: add frontend register flow and document spec18 auth handoff`
+
+### Spec 18 本轮追加记录（默认账户邮箱修复与浏览器验收，2026-04-26）
+
+- 完成内容：
+  - 定位并修复默认演示账户登录 422 错误：根因是 Pydantic `EmailStr`（`email-validator` 库）拒绝 `.local` 顶级域名
+  - 将默认账户邮箱从 `demo@paper-learning.local` 改为 `demo@paper-learning.example.com`（RFC 2606 保留域名）
+  - 同步更新 `backend/app/core/config.py`、`.env.example`、`README.md`
+  - 重启 backend 后，bootstrap service 自动更新数据库中已有默认账户的邮箱
+  - 完成真实浏览器主链路验收：
+    - 默认账户登录成功
+    - Library 可见历史四资产
+    - 可进入 Workspace 与 Slides 播放页
+    - 退出登录后被拦回 `/login`
+  - 新用户注册（`nqc233`）也正常工作
+- 验证结果：
+  - `POST /api/auth/login` 使用 `demo@paper-learning.example.com / paper123456` 返回 `200` + JWT token
+  - 用户真实浏览器验收：6 项最小验收标准全部通过
+  - 旧邮箱 `demo@paper-learning.local` 仍因 schema 校验返回 422（符合预期，不可绕过）
+- 当前已知缺口：
+  - 尚未做「用户 A 无法访问用户 B 资源」的跨用户隔离安全测试
+  - `local_dev_user_email`（`dev@paper-learning.local`）同样使用 `.local` 域，若未来需要直接登录需同步修改
+- 状态判断：**Spec 18 主体工作已完成**，最小验收标准全部满足
+- 建议提交信息：
+  - `fix: use example.com domain for default demo account email`
 
 ### Spec 16 本轮追加记录（前端体验首轮收口）
 

@@ -49,7 +49,7 @@ def create_uploaded_asset(
     """创建上传资产，并将原始 PDF 保存到 OSS。"""
     user = db.get(User, user_id)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="本地开发用户不存在。")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="当前登录用户不存在。")
 
     asset = Asset(
         user_id=user_id,

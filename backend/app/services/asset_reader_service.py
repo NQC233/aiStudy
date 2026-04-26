@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.asset import Asset
 from app.models.asset_file import AssetFile
+from app.services.asset_service import require_user_asset
 from app.core.config import settings
 from app.services.oss_service import OSSConfigurationError, build_parse_artifact_key, build_public_url
 from app.schemas.anchor import AssetAnchorPreviewRequest, AssetAnchorPreviewResponse
@@ -60,8 +61,8 @@ def _download_bytes(public_url: str) -> tuple[bytes, str | None]:
         ) from exc
 
 
-def get_asset_pdf_descriptor(db: Session, asset_id: str) -> AssetPdfDescriptor:
-    _require_asset(db, asset_id)
+def get_asset_pdf_descriptor(db: Session, asset_id: str, user_id: str) -> AssetPdfDescriptor:
+    require_user_asset(db, asset_id, user_id)
     asset_file = _get_latest_asset_file(db, asset_id, "original_pdf")
     if asset_file is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="当前资产缺少原始 PDF。")
@@ -76,8 +77,8 @@ def get_asset_pdf_descriptor(db: Session, asset_id: str) -> AssetPdfDescriptor:
     )
 
 
-def get_asset_pdf_content(db: Session, asset_id: str) -> tuple[bytes, str]:
-    descriptor = get_asset_pdf_descriptor(db, asset_id)
+def get_asset_pdf_content(db: Session, asset_id: str, user_id: str) -> tuple[bytes, str]:
+    descriptor = get_asset_pdf_descriptor(db, asset_id, user_id)
     content, remote_content_type = _download_bytes(descriptor.url)
     return content, remote_content_type or descriptor.mime_type or "application/pdf"
 
@@ -194,8 +195,8 @@ def _enrich_resource_captions(payload: ParsedDocumentPayload) -> None:
                 parent_block.text = candidate_caption
 
 
-def get_asset_parsed_document(db: Session, asset_id: str) -> AssetParsedDocumentResponse:
-    asset = _require_asset(db, asset_id)
+def get_asset_parsed_document(db: Session, asset_id: str, user_id: str) -> AssetParsedDocumentResponse:
+    asset = require_user_asset(db, asset_id, user_id)
     asset_file = _get_latest_asset_file(db, asset_id, "parsed_json")
     if asset_file is None:
         return AssetParsedDocumentResponse(asset_id=asset_id, parse_status=asset.parse_status)
@@ -223,9 +224,10 @@ def get_asset_parsed_document(db: Session, asset_id: str) -> AssetParsedDocument
 def preview_asset_anchor(
     db: Session,
     asset_id: str,
+    user_id: str,
     payload: AssetAnchorPreviewRequest,
 ) -> AssetAnchorPreviewResponse:
-    parsed_document = get_asset_parsed_document(db, asset_id)
+    parsed_document = get_asset_parsed_document(db, asset_id, user_id)
     parsed_json = parsed_document.parsed_json
     if parsed_json is None:
         raise HTTPException(

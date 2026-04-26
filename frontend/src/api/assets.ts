@@ -1,3 +1,5 @@
+import { getAuthorizationHeaderValue } from '@/api/auth';
+
 export interface AssetListItem {
   id: string;
   title: string;
@@ -575,6 +577,15 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 180000;
 const PARSED_JSON_REQUEST_TIMEOUT_MS = 30000;
 
+function mergeHeaders(headers?: HeadersInit): Headers {
+  const merged = new Headers(headers);
+  const authorization = getAuthorizationHeaderValue();
+  if (authorization) {
+    merged.set('Authorization', authorization);
+  }
+  return merged;
+}
+
 async function requestWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => {
@@ -584,6 +595,7 @@ async function requestWithTimeout(input: RequestInfo | URL, init?: RequestInit, 
   try {
     return await fetch(input, {
       ...init,
+      headers: mergeHeaders(init?.headers),
       signal: controller.signal,
     });
   } catch (error) {
@@ -697,6 +709,10 @@ export function fetchAssetPdfMeta(assetId: string): Promise<AssetPdfDescriptor> 
 
 export function getAssetPdfUrl(assetId: string): string {
   return `${API_BASE_URL}/api/assets/${assetId}/pdf`;
+}
+
+export function getAssetPdfAuthorizationHeader(): string | null {
+  return getAuthorizationHeaderValue();
 }
 
 

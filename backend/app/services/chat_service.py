@@ -20,6 +20,7 @@ from app.schemas.chat import (
     ChatSessionItem,
     ChatSessionMessagesResponse,
 )
+from app.services.asset_service import require_user_asset
 from app.services.llm_service import LLMConfigurationError, LLMRequestError, generate_qa_answer
 from app.services.retrieval_service import search_asset_chunks
 
@@ -31,8 +32,9 @@ def _require_asset(db: Session, asset_id: str) -> Asset:
     return asset
 
 
-def _require_session(db: Session, session_id: str) -> ChatSession:
-    chat_session = db.get(ChatSession, session_id)
+def require_user_session(db: Session, session_id: str, user_id: str) -> ChatSession:
+    statement = select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
+    chat_session = db.scalars(statement).first()
     if chat_session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到对应的问答会话。")
     return chat_session
@@ -67,7 +69,7 @@ def create_asset_chat_session(
     user_id: str,
     payload: ChatSessionCreateRequest,
 ) -> ChatSessionItem:
-    asset = _require_asset(db, asset_id)
+    asset = require_user_asset(db, asset_id, user_id)
     chat_session = ChatSession(
         asset_id=asset.id,
         user_id=user_id,
@@ -86,12 +88,12 @@ def create_asset_chat_session(
     )
 
 
-def list_asset_chat_sessions(db: Session, asset_id: str) -> list[ChatSessionItem]:
-    _require_asset(db, asset_id)
+def list_asset_chat_sessions(db: Session, asset_id: str, user_id: str) -> list[ChatSessionItem]:
+    require_user_asset(db, asset_id, user_id)
     statement = (
         select(ChatSession, func.count(ChatMessage.id).label("message_count"))
         .outerjoin(ChatMessage, ChatMessage.session_id == ChatSession.id)
-        .where(ChatSession.asset_id == asset_id)
+        .where(ChatSession.asset_id == asset_id, ChatSession.user_id == user_id)
         .group_by(ChatSession.id)
         .order_by(ChatSession.created_at.desc())
     )
@@ -111,8 +113,8 @@ def list_asset_chat_sessions(db: Session, asset_id: str) -> list[ChatSessionItem
     return sessions
 
 
-def list_chat_session_messages(db: Session, session_id: str) -> ChatSessionMessagesResponse:
-    chat_session = _require_session(db, session_id)
+def list_chat_session_messages(db: Session, session_id: str, user_id: str) -> ChatSessionMessagesResponse:
+    chat_session = require_user_session(db, session_id, user_id)
     statement = (
         select(ChatMessage)
         .options(selectinload(ChatMessage.citations))
@@ -168,10 +170,11 @@ def _build_history_messages(
 def create_chat_session_message(
     db: Session,
     session_id: str,
+    user_id: str,
     payload: ChatMessageCreateRequest,
 ) -> ChatMessageCreateResponse:
-    chat_session = _require_session(db, session_id)
-    asset = _require_asset(db, chat_session.asset_id)
+    chat_session = require_user_session(db, session_id, user_id)
+    asset = require_user_asset(db, chat_session.asset_id, user_id)
 
     if asset.kb_status != "ready":
         raise HTTPException(
@@ -205,6 +208,7 @@ def create_chat_session_message(
         payload.top_k,
         rewrite_query=payload.rewrite_query,
         strategy=payload.strategy,
+        user_id=user_id,
     )
     retrieval_hits = retrieval.results
 

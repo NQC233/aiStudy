@@ -33,6 +33,8 @@ from app.services.embedding_service import (
 )
 from app.services.query_rewrite_service import prepare_retrieval_query
 
+from app.services.asset_service import require_user_asset
+
 logger = logging.getLogger(__name__)
 
 
@@ -285,9 +287,9 @@ def _build_retrieval_hits(
 
 
 def list_asset_chunks(
-    db: Session, asset_id: str, limit: int = 100
+    db: Session, asset_id: str, user_id: str, limit: int = 100
 ) -> AssetChunkListResponse:
-    asset = _require_asset(db, asset_id)
+    asset = require_user_asset(db, asset_id, user_id)
     safe_limit = max(1, min(limit, 500))
     total_count = (
         db.scalar(
@@ -315,8 +317,8 @@ def list_asset_chunks(
     )
 
 
-def enqueue_asset_chunk_rebuild(db: Session, asset_id: str) -> tuple[Asset, bool]:
-    asset = _require_asset(db, asset_id)
+def enqueue_asset_chunk_rebuild(db: Session, asset_id: str, user_id: str) -> tuple[Asset, bool]:
+    asset = require_user_asset(db, asset_id, user_id)
     if asset.parse_status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -387,8 +389,12 @@ def search_asset_chunks(
     top_k: int,
     rewrite_query: bool = False,
     strategy: str = "s0",
+    user_id: str | None = None,
 ) -> AssetRetrievalSearchResponse:
-    _require_asset(db, asset_id)
+    if user_id is not None:
+        require_user_asset(db, asset_id, user_id)
+    else:
+        _require_asset(db, asset_id)
     normalized_query = query.strip()
     if not normalized_query:
         raise HTTPException(

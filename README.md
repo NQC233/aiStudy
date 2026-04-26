@@ -122,6 +122,26 @@ cp .env.example .env
 - 必需（本地基本启动）：PostgreSQL、Redis、前后端基础项
 - 业务链路必需：OSS、MinerU、DashScope（若需完整跑通上传解析问答）
 
+#### 8.1.1 默认演示账户（Spec 18）
+
+启动后端时，应用会在 `lifespan` 阶段自动执行默认账户 bootstrap：
+
+- 确保默认账户存在
+- 确保默认账户密码与展示名与环境变量一致
+- 将历史 `local-dev-user` 名下资产 / 问答会话 / 锚点 / 笔记迁移到默认账户下
+
+默认本地登录账户如下：
+
+- 邮箱：`demo@example.com`
+- 密码：`paper123456`
+
+如需修改，请同步调整根目录 `/.env` 中的以下变量：
+
+- `AUTH_DEFAULT_ACCOUNT_EMAIL`
+- `AUTH_DEFAULT_ACCOUNT_PASSWORD`
+- `AUTH_DEFAULT_ACCOUNT_NAME`
+- `AUTH_DEFAULT_ACCOUNT_ENABLED`
+
 ### 8.2 启动容器
 
 ```bash
@@ -188,10 +208,13 @@ docker compose logs -f worker
 - `SLIDES_*`：Slides 业务运行时控制（并发度、画布、校验、升级等）
 - `KB_*`：知识库切块与索引配置
 - `QA_*`：问答上下文与回答控制
+- `AUTH_*`：认证、JWT 与默认演示账户配置
 
 ### 9.4 当前高频变量分类
 
 - `VITE_API_BASE_URL`：前端 API 基础地址
+- `AUTH_JWT_SECRET` / `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES`：Bearer Token 签发配置
+- `AUTH_DEFAULT_ACCOUNT_*`：默认演示账户与历史 local-dev-user 数据迁移配置
 - `POSTGRES_*`：数据库连接
 - `REDIS_URL` / `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`：任务队列配置
 - `ALIYUN_OSS_*`：对象存储配置

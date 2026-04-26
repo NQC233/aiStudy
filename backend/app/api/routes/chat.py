@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.api.deps.auth import get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.chat import (
     ChatMessageCreateRequest,
     ChatMessageCreateResponse,
@@ -20,9 +22,10 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 def list_chat_session_messages_endpoint(
     session_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ChatSessionMessagesResponse:
     """返回会话内全部消息和引用。"""
-    return list_chat_session_messages(db, session_id)
+    return list_chat_session_messages(db, session_id, current_user.id)
 
 
 @router.post(
@@ -34,6 +37,7 @@ def create_chat_session_message_endpoint(
     session_id: str,
     payload: ChatMessageCreateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ChatMessageCreateResponse:
     """执行单资产检索增强问答并持久化消息与引用。"""
-    return create_chat_session_message(db, session_id, payload)
+    return create_chat_session_message(db, session_id, current_user.id, payload)

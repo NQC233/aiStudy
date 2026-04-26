@@ -34,3 +34,15 @@ class RuntimeConfigTests(unittest.TestCase):
         settings = Settings(_env_file=None)
 
         self.assertEqual(settings.slides_processing_stale_timeout_sec, 1800)
+
+    def test_default_auth_settings_are_present(self) -> None:
+        settings = Settings(_env_file=None)
+
+        self.assertEqual(settings.auth_jwt_secret, "change-me-in-env")
+        self.assertEqual(settings.auth_access_token_expire_minutes, 60 * 24 * 7)
+        self.assertFalse(settings.auth_dev_bypass_enabled)
+        self.assertTrue(settings.auth_default_account_enabled)
+        self.assertEqual(settings.auth_default_account_id, "default-demo-user")
+        self.assertEqual(settings.auth_default_account_email, "demo@paper-learning.local")
+        self.assertEqual(settings.auth_default_account_name, "默认演示账户")
+        self.assertEqual(settings.auth_default_account_password, "paper123456")

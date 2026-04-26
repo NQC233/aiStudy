@@ -22,6 +22,7 @@ from app.schemas.note import (
     UpdateNoteRequest,
 )
 from app.services.asset_reader_service import get_asset_parsed_document
+from app.services.asset_service import require_user_asset
 
 
 def _require_asset(db: Session, asset_id: str) -> Asset:
@@ -41,6 +42,7 @@ def _normalize_optional_text(value: str | None) -> str | None:
 def _normalize_text_selection_anchor(
     db: Session,
     asset_id: str,
+    user_id: str,
     payload: NoteAnchorPayload,
 ) -> dict[str, Any]:
     selector_payload = dict(payload.selector_payload or {})
@@ -52,7 +54,7 @@ def _normalize_text_selection_anchor(
             detail="text_selection 锚点必须包含 block_id 或 selector_payload.block_id。",
         )
 
-    parsed_document = get_asset_parsed_document(db, asset_id)
+    parsed_document = get_asset_parsed_document(db, asset_id, user_id)
     parsed_json = parsed_document.parsed_json
     if parsed_json is None:
         raise HTTPException(
@@ -91,6 +93,7 @@ def _normalize_text_selection_anchor(
 def _normalize_mindmap_node_anchor(
     db: Session,
     asset_id: str,
+    user_id: str,
     payload: NoteAnchorPayload,
 ) -> dict[str, Any]:
     selector_payload = dict(payload.selector_payload or {})
@@ -105,7 +108,7 @@ def _normalize_mindmap_node_anchor(
     statement = (
         select(MindmapNode)
         .join(Mindmap, Mindmap.id == MindmapNode.mindmap_id)
-        .where(Mindmap.asset_id == asset_id, MindmapNode.node_key == node_key)
+        .where(Mindmap.asset_id == asset_id, Mindmap.user_id == user_id, MindmapNode.node_key == node_key)
         .order_by(Mindmap.version.desc(), Mindmap.created_at.desc(), MindmapNode.created_at.desc())
     )
     mindmap_node = db.scalars(statement).first()
@@ -177,13 +180,14 @@ def _normalize_knowledge_point_anchor(payload: NoteAnchorPayload) -> dict[str, A
 def _normalize_anchor_payload(
     db: Session,
     asset_id: str,
+    user_id: str,
     payload: NoteAnchorPayload,
 ) -> dict[str, Any]:
     # 关键归一化逻辑：把不同来源的锚点结构统一为可持久化、可回跳的稳定字段集合。
     if payload.anchor_type == "text_selection":
-        return _normalize_text_selection_anchor(db, asset_id, payload)
+        return _normalize_text_selection_anchor(db, asset_id, user_id, payload)
     if payload.anchor_type == "mindmap_node":
-        return _normalize_mindmap_node_anchor(db, asset_id, payload)
+        return _normalize_mindmap_node_anchor(db, asset_id, user_id, payload)
     return _normalize_knowledge_point_anchor(payload)
 
 
@@ -291,8 +295,8 @@ def create_asset_note(
     user_id: str,
     payload: CreateNoteRequest,
 ) -> NoteItemResponse:
-    asset = _require_asset(db, asset_id)
-    normalized_anchor = _normalize_anchor_payload(db, asset.id, payload.anchor)
+    asset = require_user_asset(db, asset_id, user_id)
+    normalized_anchor = _normalize_anchor_payload(db, asset.id, user_id, payload.anchor)
     content = payload.content.strip()
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="content 不能为空。")
@@ -324,7 +328,7 @@ def list_asset_notes(
     user_id: str,
     anchor_type: AnchorType | None = None,
 ) -> NoteListResponse:
-    _require_asset(db, asset_id)
+    require_user_asset(db, asset_id, user_id)
     statement = (
         select(Note)
         .options(selectinload(Note.anchor))

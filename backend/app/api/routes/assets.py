@@ -10,8 +10,9 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.api.deps.auth import get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.anchor import AssetAnchorPreviewRequest, AssetAnchorPreviewResponse
 from app.schemas.asset import AssetDeleteResponse, AssetDetail, AssetListItem
 from app.schemas.document_chunk import (
@@ -77,32 +78,32 @@ router = APIRouter(prefix="/api/assets", tags=["assets"])
 
 
 @router.get("", response_model=list[AssetListItem], summary="获取资产列表")
-def list_asset_endpoint(db: Session = Depends(get_db)) -> list[AssetListItem]:
+def list_asset_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[AssetListItem]:
     """返回图书馆页所需的资产列表。"""
-    return list_assets(db)
+    return list_assets(db, current_user.id)
 
 
 @router.get("/{asset_id}", response_model=AssetDetail, summary="获取资产详情")
 def get_asset_detail_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetDetail:
     """返回工作区占位页所需的资产详情。"""
-    asset = get_asset_detail(db, asset_id)
-    if asset is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="未找到对应的学习资产。",
-        )
-    return asset
+    return get_asset_detail(db, asset_id, current_user.id)
 
 
 @router.delete("/{asset_id}", response_model=AssetDeleteResponse, summary="删除学习资产")
 def delete_asset_endpoint(
     asset_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetDeleteResponse:
     """删除资产及其关联数据，并尽量清理 OSS 存储对象。"""
-    return delete_asset(db, asset_id)
+    return delete_asset(db, asset_id, current_user.id)
 
 
 @router.get(
@@ -111,16 +112,22 @@ def delete_asset_endpoint(
     summary="获取阅读器 PDF 地址",
 )
 def get_asset_pdf_meta_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetPdfDescriptor:
     """返回阅读器加载 PDF 所需的元信息。"""
-    return get_asset_pdf_descriptor(db, asset_id)
+    return get_asset_pdf_descriptor(db, asset_id, current_user.id)
 
 
 @router.get("/{asset_id}/pdf", summary="获取原始 PDF 内容")
-def get_asset_pdf_endpoint(asset_id: str, db: Session = Depends(get_db)) -> Response:
+def get_asset_pdf_endpoint(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
     """代理原始 PDF，避免前端直接依赖 OSS 跨域配置。"""
-    content, content_type = get_asset_pdf_content(db, asset_id)
+    content, content_type = get_asset_pdf_content(db, asset_id, current_user.id)
     return Response(content=content, media_type=content_type)
 
 
@@ -130,20 +137,24 @@ def get_asset_pdf_endpoint(asset_id: str, db: Session = Depends(get_db)) -> Resp
     summary="获取 parsed_json",
 )
 def get_asset_parsed_json_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetParsedDocumentResponse:
     """返回阅读器目录、块级定位和锚点索引所需的 parsed_json。"""
-    return get_asset_parsed_document(db, asset_id)
+    return get_asset_parsed_document(db, asset_id, current_user.id)
 
 
 @router.get(
     "/{asset_id}/mindmap", response_model=AssetMindmapResponse, summary="获取资产导图"
 )
 def get_asset_mindmap_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetMindmapResponse:
     """返回当前资产可用的导图节点与映射信息。"""
-    return get_asset_mindmap(db, asset_id)
+    return get_asset_mindmap(db, asset_id, current_user.id)
 
 
 @router.get(
@@ -152,16 +163,12 @@ def get_asset_mindmap_endpoint(
     summary="获取资产解析状态",
 )
 def get_asset_status_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetParseStatusResponse:
     """返回当前资产和最近一次解析任务的状态摘要。"""
-    parse_status = get_asset_parse_status(db, asset_id)
-    if parse_status is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="未找到对应的学习资产。",
-        )
-    return parse_status
+    return get_asset_parse_status(db, asset_id, current_user.id)
 
 
 @router.get(
@@ -170,16 +177,12 @@ def get_asset_status_endpoint(
     summary="获取资产解析详情",
 )
 def get_asset_parse_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetParseStatusResponse:
     """首期解析详情直接复用状态结构，后续可单独扩展。"""
-    parse_status = get_asset_parse_status(db, asset_id)
-    if parse_status is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="未找到对应的学习资产。",
-        )
-    return parse_status
+    return get_asset_parse_status(db, asset_id, current_user.id)
 
 
 @router.get(
@@ -190,9 +193,10 @@ def get_asset_parse_endpoint(
 def get_asset_slides_endpoint(
     asset_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetSlidesResponse:
     """返回当前可用的 slides 播放快照。"""
-    return get_asset_slides_snapshot(db, asset_id)
+    return get_asset_slides_snapshot(db, asset_id, current_user.id)
 
 
 @router.post(
@@ -204,12 +208,14 @@ def rebuild_asset_runtime_bundle_slides_endpoint(
     asset_id: str,
     payload: AssetSlidesRebuildRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetSlidesResponse:
     """将 slides runtime bundle 重建请求加入 Celery 队列。"""
     try:
         asset, presentation = enqueue_asset_slides_runtime_bundle_rebuild(
             db,
             asset_id=asset_id,
+            user_id=current_user.id,
             from_stage=payload.from_stage,
             page_numbers=payload.page_numbers,
             failed_only=payload.failed_only,
@@ -233,7 +239,7 @@ def rebuild_asset_runtime_bundle_slides_endpoint(
     )
     presentation.active_run_token = getattr(task, "id", None)
     db.commit()
-    return get_asset_slides_snapshot(db, asset_id)
+    return get_asset_slides_snapshot(db, asset_id, current_user.id)
 
 
 @router.post(
@@ -245,11 +251,13 @@ def ensure_asset_slide_tts_endpoint(
     asset_id: str,
     payload: AssetSlideTtsEnsureRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetSlideTtsEnsureResponse:
     """按播放进度触发当前页懒生成，并可预取下一页。"""
     response = ensure_asset_slide_tts(
         db,
         asset_id=asset_id,
+        user_id=current_user.id,
         page_index=payload.page_index,
         prefetch_next=payload.prefetch_next,
     )
@@ -267,11 +275,13 @@ def retry_next_asset_slide_tts_endpoint(
     asset_id: str,
     payload: AssetSlideTtsRetryNextRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetSlideTtsRetryNextResponse:
     """自动播放暂停后，重试下一页失败任务并重新入队。"""
     response = retry_next_asset_slide_tts(
         db,
         asset_id=asset_id,
+        user_id=current_user.id,
         current_page_index=payload.current_page_index,
     )
     for slide_key in response.enqueued_slide_keys:
@@ -285,10 +295,12 @@ def retry_next_asset_slide_tts_endpoint(
     summary="重试资产解析",
 )
 def retry_asset_parse_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetParseRetryResponse:
     """将失败或未开始的资产重新推进到解析队列。"""
-    asset, should_enqueue, message = enqueue_asset_parse_retry(db, asset_id)
+    asset, should_enqueue, message = enqueue_asset_parse_retry(db, asset_id, current_user.id)
     if should_enqueue:
         enqueue_parse_asset.delay(asset.id)
     return AssetParseRetryResponse(
@@ -307,9 +319,10 @@ def list_asset_chunks_endpoint(
     asset_id: str,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetChunkListResponse:
     """用于调试 chunk 构建结果和引用映射。"""
-    return list_asset_chunks(db, asset_id=asset_id, limit=limit)
+    return list_asset_chunks(db, asset_id=asset_id, user_id=current_user.id, limit=limit)
 
 
 @router.post(
@@ -318,10 +331,12 @@ def list_asset_chunks_endpoint(
     summary="重建资产知识库",
 )
 def rebuild_asset_chunks_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetChunkRebuildResponse:
     """将当前资产推进到知识库重建队列。"""
-    asset, should_enqueue = enqueue_asset_chunk_rebuild(db, asset_id)
+    asset, should_enqueue = enqueue_asset_chunk_rebuild(db, asset_id, current_user.id)
     if should_enqueue:
         enqueue_build_asset_kb.delay(asset.id)
     return AssetChunkRebuildResponse(
@@ -339,10 +354,12 @@ def rebuild_asset_chunks_endpoint(
     summary="重建资产导图",
 )
 def rebuild_asset_mindmap_endpoint(
-    asset_id: str, db: Session = Depends(get_db)
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetMindmapRebuildResponse:
     """将当前资产推进到导图重建队列。"""
-    asset, should_enqueue = enqueue_asset_mindmap_rebuild(db, asset_id)
+    asset, should_enqueue = enqueue_asset_mindmap_rebuild(db, asset_id, current_user.id)
     if should_enqueue:
         enqueue_generate_asset_mindmap.delay(asset.id)
     return AssetMindmapRebuildResponse(
@@ -363,6 +380,7 @@ def search_asset_retrieval_endpoint(
     asset_id: str,
     payload: AssetRetrievalSearchRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetRetrievalSearchResponse:
     """返回单资产范围内可直接回跳的检索结果。"""
     return search_asset_chunks(
@@ -372,6 +390,7 @@ def search_asset_retrieval_endpoint(
         top_k=payload.top_k,
         rewrite_query=payload.rewrite_query,
         strategy=payload.strategy,
+        user_id=current_user.id,
     )
 
 
@@ -384,12 +403,13 @@ def create_asset_chat_session_endpoint(
     asset_id: str,
     payload: ChatSessionCreateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ChatSessionItem:
     """创建单资产问答会话。"""
     return create_asset_chat_session(
         db=db,
         asset_id=asset_id,
-        user_id=settings.local_dev_user_id,
+        user_id=current_user.id,
         payload=payload,
     )
 
@@ -402,9 +422,10 @@ def create_asset_chat_session_endpoint(
 def list_asset_chat_sessions_endpoint(
     asset_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[ChatSessionItem]:
     """返回当前资产下的会话列表。"""
-    return list_asset_chat_sessions(db, asset_id)
+    return list_asset_chat_sessions(db, asset_id, current_user.id)
 
 
 @router.post(
@@ -416,9 +437,10 @@ def preview_asset_anchor_endpoint(
     asset_id: str,
     payload: AssetAnchorPreviewRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetAnchorPreviewResponse:
     """首期只做结构校验和标准化，不做持久化。"""
-    return preview_asset_anchor(db, asset_id, payload)
+    return preview_asset_anchor(db, asset_id, current_user.id, payload)
 
 
 @router.post(
@@ -430,12 +452,13 @@ def create_asset_note_endpoint(
     asset_id: str,
     payload: CreateNoteRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> NoteItemResponse:
     """基于文本选区或导图节点锚点创建笔记。"""
     return create_asset_note(
         db=db,
         asset_id=asset_id,
-        user_id=settings.local_dev_user_id,
+        user_id=current_user.id,
         payload=payload,
     )
 
@@ -449,12 +472,13 @@ def list_asset_notes_endpoint(
     asset_id: str,
     anchor_type: AnchorType | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> NoteListResponse:
     """返回单资产范围下可用于复习和回跳的笔记列表。"""
     return list_asset_notes(
         db=db,
         asset_id=asset_id,
-        user_id=settings.local_dev_user_id,
+        user_id=current_user.id,
         anchor_type=anchor_type,
     )
 
@@ -466,6 +490,7 @@ async def upload_asset_endpoint(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AssetUploadResponse:
     """上传单个 PDF 文件，完成 OSS 存储与资产创建。"""
     content = await file.read()
@@ -476,7 +501,7 @@ async def upload_asset_endpoint(
     )
     return create_uploaded_asset(
         db=db,
-        user_id=settings.local_dev_user_id,
+        user_id=current_user.id,
         filename=file.filename or "paper.pdf",
         content_type=content_type,
         content=content,

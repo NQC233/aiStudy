@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "test:e2e:spec12": "playwright test tests/e2e/spec12-playback.spec.ts",
-    "test:e2e:spec12:docker": "playwright test -c playwright.docker.config.ts tests/e2e/spec12-docker-real.spec.ts"
+    "test:e2e:spec12:docker": "playwright test -c playwright.docker.config.ts tests/e2e/spec12-docker-real.spec.ts",
+    "test:e2e:spec18": "playwright test tests/e2e/spec18-auth.spec.ts"
   },
   "dependencies": {
     "dompurify": "^3.3.1",

@@ -2,6 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -27,12 +28,12 @@ class _FakeDb:
         return self._asset if asset_id == self._asset.id else None
 
     def scalars(self, _statement):  # noqa: ANN001
-        return _ScalarResult(self._presentation)
+        return _ScalarResult(self._presentation if self._presentation is not None else self._asset)
 
 
 class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
     def test_get_asset_slides_snapshot_marks_active_run_token_as_rebuilding(self) -> None:
-        asset = SimpleNamespace(id="asset-1", slides_status="processing")
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="processing")
         presentation = SimpleNamespace(
             asset_id="asset-1",
             status="processing",
@@ -66,14 +67,15 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
             },
         )
 
-        snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1")
+        with patch("app.services.slide_dsl_service.require_user_asset", return_value=asset):
+            snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1", "user-1")
 
         self.assertTrue(snapshot.rebuilding)
         self.assertEqual(snapshot.rebuild_reason, "runtime_bundle_rebuild")
         self.assertEqual(snapshot.slides_status, "processing")
 
     def test_get_asset_slides_snapshot_does_not_mark_failed_run_as_rebuilding(self) -> None:
-        asset = SimpleNamespace(id="asset-1", slides_status="failed")
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="failed")
         presentation = SimpleNamespace(
             asset_id="asset-1",
             status="failed",
@@ -97,13 +99,14 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
             },
         )
 
-        snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1")
+        with patch("app.services.slide_dsl_service.require_user_asset", return_value=asset):
+            snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1", "user-1")
 
         self.assertFalse(snapshot.rebuilding)
         self.assertIsNone(snapshot.rebuild_reason)
 
     def test_get_asset_slides_snapshot_prefers_page_level_runtime_state_over_stale_summary(self) -> None:
-        asset = SimpleNamespace(id="asset-1", slides_status="ready")
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="ready")
         presentation = SimpleNamespace(
             asset_id="asset-1",
             slides_dsl=None,
@@ -148,7 +151,8 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
             dsl_fix_logs=[],
         )
 
-        snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1")
+        with patch("app.services.slide_dsl_service.require_user_asset", return_value=asset):
+            snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1", "user-1")
 
         self.assertEqual(snapshot.playback_status, "ready")
         self.assertEqual(snapshot.playable_page_count, 2)
@@ -157,7 +161,7 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
         self.assertTrue(snapshot.auto_page_supported)
 
     def test_get_asset_slides_snapshot_prefers_runtime_bundle_payload(self) -> None:
-        asset = SimpleNamespace(id="asset-1", slides_status="ready")
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="ready")
         presentation = SimpleNamespace(
             asset_id="asset-1",
             slides_dsl=None,
@@ -179,7 +183,8 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
             dsl_fix_logs=[],
         )
 
-        snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1")
+        with patch("app.services.slide_dsl_service.require_user_asset", return_value=asset):
+            snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1", "user-1")
 
         self.assertIsNotNone(snapshot.runtime_bundle)
         self.assertEqual(snapshot.runtime_bundle.page_count, 1)
@@ -193,7 +198,7 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
         self.assertTrue(snapshot.auto_page_supported)
 
     def test_get_asset_slides_snapshot_marks_empty_runtime_bundle_not_ready(self) -> None:
-        asset = SimpleNamespace(id="asset-1", slides_status="ready")
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="ready")
         presentation = SimpleNamespace(
             asset_id="asset-1",
             slides_dsl=None,
@@ -207,7 +212,8 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
             dsl_fix_logs=[],
         )
 
-        snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1")
+        with patch("app.services.slide_dsl_service.require_user_asset", return_value=asset):
+            snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1", "user-1")
 
         self.assertEqual(snapshot.playback_status, "not_ready")
         self.assertEqual(snapshot.playable_page_count, 0)
@@ -215,7 +221,7 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
         self.assertFalse(snapshot.auto_page_supported)
 
     def test_get_asset_slides_snapshot_marks_blocked_runtime_bundle_not_ready(self) -> None:
-        asset = SimpleNamespace(id="asset-1", slides_status="failed")
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="failed")
         presentation = SimpleNamespace(
             asset_id="asset-1",
             slides_dsl=None,
@@ -240,15 +246,17 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
             dsl_fix_logs=[],
         )
 
-        snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1")
+        with patch("app.services.slide_dsl_service.require_user_asset", return_value=asset):
+            snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1", "user-1")
 
         self.assertEqual(snapshot.playback_status, "not_ready")
         self.assertEqual(snapshot.playable_page_count, 0)
         self.assertEqual(snapshot.failed_page_numbers, [1])
         self.assertEqual(snapshot.runtime_bundle.validation_summary.status, "not_ready")
         self.assertFalse(snapshot.auto_page_supported)
+
     def test_get_asset_slides_snapshot_marks_partially_failed_runtime_bundle_as_partial_ready(self) -> None:
-        asset = SimpleNamespace(id="asset-1", slides_status="failed")
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="failed")
         presentation = SimpleNamespace(
             asset_id="asset-1",
             slides_dsl=None,
@@ -280,15 +288,17 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
             dsl_fix_logs=[],
         )
 
-        snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1")
+        with patch("app.services.slide_dsl_service.require_user_asset", return_value=asset):
+            snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1", "user-1")
 
         self.assertEqual(snapshot.playback_status, "partial_ready")
         self.assertEqual(snapshot.playable_page_count, 1)
         self.assertEqual(snapshot.failed_page_numbers, [2])
         self.assertEqual(snapshot.runtime_bundle.validation_summary.status, "partial_ready")
         self.assertTrue(snapshot.auto_page_supported)
+
     def test_get_asset_slides_snapshot_exposes_rebuild_meta(self) -> None:
-        asset = SimpleNamespace(id="asset-1", slides_status="processing")
+        asset = SimpleNamespace(id="asset-1", user_id="user-1", slides_status="processing")
         presentation = SimpleNamespace(
             asset_id="asset-1",
             slides_dsl=None,
@@ -320,7 +330,8 @@ class SlideRuntimeSnapshotServiceTests(unittest.TestCase):
             },
         )
 
-        snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1")
+        with patch("app.services.slide_dsl_service.require_user_asset", return_value=asset):
+            snapshot = get_asset_slides_snapshot(_FakeDb(asset, presentation), "asset-1", "user-1")
 
         self.assertIsNotNone(snapshot.rebuild_meta)
         self.assertEqual(snapshot.rebuild_meta.from_stage, "html")
